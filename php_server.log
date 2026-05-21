@@ -44,3 +44,6 @@
 [Thu May 21 05:57:27 2026] [::1]:38734 Accepted
 [Thu May 21 05:57:27 2026] [::1]:38734 [200]: GET /api/camps?
 [Thu May 21 05:57:27 2026] [::1]:38734 Closing
+[Thu May 21 06:37:26 2026] [::1]:59458 Accepted
+[Thu May 21 06:37:26 2026] [::1]:59458 [200]: GET /api/camps?
+[Thu May 21 06:37:26 2026] [::1]:59458 Closing
