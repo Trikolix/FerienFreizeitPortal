@@ -47,7 +47,7 @@ export const AdminDashboard: React.FC = () => {
       // The backend /api/camps GET logic fetches active by default, or all if we pass club_id.
       // To get ALL camps for admin, we need a small adjustment on backend or a specific admin endpoint.
       // We will adjust backend to return all camps if admin.
-      const res = await fetch('http://localhost:8000/api/camps?all=1', {
+      const res = await fetch('/api/camps?all=1', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
@@ -60,7 +60,7 @@ export const AdminDashboard: React.FC = () => {
   const handleEditCamp = async (camp: Camp) => {
     const newTitle = prompt('Neuer Titel:', camp.title);
     if (newTitle) {
-      await fetch(`http://localhost:8000/api/camps/${camp.id}`, {
+      await fetch(`/api/camps/${camp.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -74,7 +74,7 @@ export const AdminDashboard: React.FC = () => {
 
   const handleDeleteCamp = async (id: number) => {
     if (confirm('Wirklich löschen?')) {
-      await fetch(`http://localhost:8000/api/camps/${id}`, {
+      await fetch(`/api/camps/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -84,7 +84,7 @@ export const AdminDashboard: React.FC = () => {
 
   const fetchClubs = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/admin/users', {
+      const res = await fetch('/api/admin/users', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
@@ -99,7 +99,7 @@ export const AdminDashboard: React.FC = () => {
     setError('');
 
     try {
-      const res = await fetch('http://localhost:8000/api/admin/users', {
+      const res = await fetch('/api/admin/users', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

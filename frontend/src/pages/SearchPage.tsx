@@ -22,6 +22,7 @@ interface Camp {
   type: string;
   location_lat: number;
   location_lng: number;
+  images?: string[];
 }
 
 export const SearchPage: React.FC = () => {
@@ -38,7 +39,7 @@ export const SearchPage: React.FC = () => {
   }, [ageFilter, typeFilter, bounds]);
 
   const fetchCamps = async () => {
-    let url = 'http://localhost:8000/api/camps?';
+    let url = '/api/camps?';
     if (ageFilter) url += `age=${ageFilter}&`;
     if (typeFilter) url += `type=${typeFilter}&`;
 
@@ -145,10 +146,14 @@ export const SearchPage: React.FC = () => {
                   style={{ display: 'flex', flexDirection: 'column' }}
                   whileHover={{ y: -5, transition: { duration: 0.2 } }}
                 >
-                  {/* Image Placeholder if actual images were fetched we'd display them here */}
-                  <div style={{ height: '150px', backgroundColor: 'var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-color-muted)' }}>
-                    Bilder-Vorschau
-                  </div>
+                  {camp.images && camp.images.length > 0 ? (
+                    <div style={{ height: '150px', backgroundColor: 'var(--border-color)', backgroundImage: `url(${camp.images[0]})`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+                    </div>
+                  ) : (
+                    <div style={{ height: '150px', backgroundColor: 'var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-color-muted)' }}>
+                      Kein Bild verfügbar
+                    </div>
+                  )}
                   <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
                     <h2 style={{ margin: 0, fontSize: '1.25rem' }}>{camp.title}</h2>
                     <p style={{ margin: 0, color: 'var(--primary-color)', fontWeight: 500 }}>{camp.club_name}</p>

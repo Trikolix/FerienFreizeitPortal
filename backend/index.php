@@ -39,6 +39,7 @@ try {
             if ($dbConnection === 'pgsql') {
                 $schema = str_replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'SERIAL PRIMARY KEY', $schema);
                 $schema = str_replace('DATETIME', 'TIMESTAMP', $schema);
+                $schema = str_replace('BOOLEAN DEFAULT 1', 'BOOLEAN DEFAULT true', $schema);
             } elseif ($dbConnection === 'mysql') {
                 $schema = str_replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'INT AUTO_INCREMENT PRIMARY KEY', $schema);
             }
@@ -71,6 +72,12 @@ function jsonResponse($data, $statusCode = 200) {
 
 // Router
 $requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+
+// Built-in server static file serving
+if (php_sapi_name() === 'cli-server' && is_file(__DIR__ . $requestUri)) {
+    return false;
+}
+
 $requestMethod = $_SERVER['REQUEST_METHOD'];
 
 // Auth token validation
@@ -80,9 +87,10 @@ function authenticateUser($db) {
 
     if (preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
         $token = $matches[1];
+        $now = date('Y-m-d H:i:s');
 
-        $stmt = $db->prepare('SELECT u.* FROM users u JOIN sessions s ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > datetime("now")');
-        $stmt->execute([$token]);
+        $stmt = $db->prepare('SELECT u.* FROM users u JOIN sessions s ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ?');
+        $stmt->execute([$token, $now]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($user) {
@@ -171,13 +179,28 @@ try {
             if (isset($_FILES['images'])) {
                 $stmtImg = $db->prepare('INSERT INTO camp_images (camp_id, image_url) VALUES (?, ?)');
                 $files = $_FILES['images'];
+
+                $allowedMimeTypes = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+
                 for ($i = 0; $i < count($files['name']); $i++) {
                     if ($files['error'][$i] === UPLOAD_ERR_OK) {
-                        $ext = pathinfo($files['name'][$i], PATHINFO_EXTENSION);
-                        $filename = uniqid() . '.' . $ext;
-                        $destination = __DIR__ . '/uploads/' . $filename;
-                        if (move_uploaded_file($files['tmp_name'][$i], $destination)) {
-                            $stmtImg->execute([$newCampId, '/uploads/' . $filename]);
+                        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                        $mimeType = finfo_file($finfo, $files['tmp_name'][$i]);
+                        finfo_close($finfo);
+
+                        if (array_key_exists($mimeType, $allowedMimeTypes)) {
+                            $ext = $allowedMimeTypes[$mimeType];
+                            $filename = uniqid() . '.' . $ext;
+
+                            $uploadDir = __DIR__ . '/uploads';
+                            if (!is_dir($uploadDir)) {
+                                mkdir($uploadDir, 0755, true);
+                            }
+
+                            $destination = $uploadDir . '/' . $filename;
+                            if (move_uploaded_file($files['tmp_name'][$i], $destination)) {
+                                $stmtImg->execute([$newCampId, '/uploads/' . $filename]);
+                            }
                         }
                     }
                 }

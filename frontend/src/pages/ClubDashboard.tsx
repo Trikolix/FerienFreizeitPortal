@@ -15,6 +15,7 @@ interface Camp {
   cost: string;
   accessibility: string;
   is_active: number;
+  images?: string[];
 }
 
 export const ClubDashboard: React.FC = () => {
@@ -40,9 +41,9 @@ export const ClubDashboard: React.FC = () => {
       // Assuming GET /api/camps returns all active, but we need inactive too for the club.
       // We will adjust the backend query slightly or add /api/club/camps if needed.
       // For now, we will add an endpoint in backend later if necessary, or just use a generic fetch.
-      const res = await fetch(`http://localhost:8000/api/camps?club_id=${user?.id}`);
+      const res = await fetch(`/api/camps?club_id=${user?.id}`);
       const data = await res.json();
-      setCamps(data.filter((c: any) => c.club_name === user?.username)); // Workaround for now
+      setCamps(data);
     } catch (error) {
       console.error(error);
     }
@@ -51,7 +52,7 @@ export const ClubDashboard: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const method = isEditing ? 'PUT' : 'POST';
-    const url = isEditing ? `http://localhost:8000/api/camps/${formData.id}` : 'http://localhost:8000/api/camps';
+    const url = isEditing ? `/api/camps/${formData.id}` : '/api/camps';
 
     try {
       let reqBody: any;
@@ -89,7 +90,7 @@ export const ClubDashboard: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      await fetch(`http://localhost:8000/api/camps/${id}`, {
+      await fetch(`/api/camps/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -106,7 +107,7 @@ export const ClubDashboard: React.FC = () => {
 
   const toggleActive = async (camp: Camp) => {
     try {
-      await fetch(`http://localhost:8000/api/camps/${camp.id}`, {
+      await fetch(`/api/camps/${camp.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -186,9 +187,14 @@ export const ClubDashboard: React.FC = () => {
           <ul style={{ listStyle: 'none', padding: 0 }}>
             {camps.map(camp => (
               <li key={camp.id} style={{ border: '1px solid var(--border-color)', margin: '1rem 0', padding: '1rem', display: 'flex', justifyContent: 'space-between' }}>
-                <div>
-                  <h3>{camp.title}</h3>
-                  <p>Status: {camp.is_active ? 'Aktiv' : 'Deaktiviert'}</p>
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                  {camp.images && camp.images.length > 0 && (
+                    <img src={camp.images[0]} alt="Camp" style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '4px' }} />
+                  )}
+                  <div>
+                    <h3>{camp.title}</h3>
+                    <p>Status: {camp.is_active ? 'Aktiv' : 'Deaktiviert'}</p>
+                  </div>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
                   <button onClick={() => handleEdit(camp)}>Bearbeiten</button>

@@ -28,15 +28,19 @@ Dies startet das React-Frontend unter `http://localhost:5173` und das PHP-Backen
 * Benutzername: `admin`
 * Passwort: `admin`
 
-## Ausführung via Docker (inkl. MySQL)
+## Ausführung via Docker (Gesamter Stack)
 
-Um die Anwendung vollständig isoliert inklusive einer MySQL-Datenbank laufen zu lassen:
+Um die gesamte Anwendung vollständig isoliert (Frontend, PHP-Backend und MySQL-Datenbank) laufen zu lassen:
 
 ```bash
 docker-compose up -d --build
 ```
 
-Das Backend ist dann unter `http://localhost:8000` erreichbar. Die Datenbank-Tabellen werden automatisch erstellt.
+Nachdem die Container gestartet sind, erreichst du:
+* **Frontend:** `http://localhost:8080`
+* **Backend API:** `http://localhost:8000`
+
+Die Datenbank-Tabellen werden beim ersten Aufruf automatisch erstellt.
 
 ## Produktion Deployment
 
