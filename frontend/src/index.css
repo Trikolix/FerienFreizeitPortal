@@ -1,0 +1,35 @@
+:root {
+  --bg-color: #ffffff;
+  --text-color: #333333;
+  --link-color: #0066cc;
+  --border-color: #cccccc;
+}
+
+html.theme-high-contrast {
+  --bg-color: #000000;
+  --text-color: #ffffff;
+  --link-color: #ffff00;
+  --border-color: #ffffff;
+}
+
+html.theme-colorblind {
+  --bg-color: #f0f0f0;
+  --text-color: #222222;
+  --link-color: #0055ff;
+  --border-color: #999999;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-family: sans-serif;
+  margin: 0;
+}
+
+a {
+  color: var(--link-color);
+}
+
+.app-container {
+  min-height: 100vh;
+}

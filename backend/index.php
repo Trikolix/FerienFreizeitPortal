@@ -1,0 +1,279 @@
+<?php
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization');
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
+
+$db = new PDO('sqlite:' . __DIR__ . '/database.sqlite');
+$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+// Central logging
+function logError($message) {
+    error_log(date('[Y-m-d H:i:s] ') . $message . "\n", 3, __DIR__ . '/error.log');
+}
+
+// Helper: send JSON response
+function jsonResponse($data, $statusCode = 200) {
+    http_response_code($statusCode);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($data, JSON_UNESCAPED_UNICODE);
+    exit();
+}
+
+// Router
+$requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$requestMethod = $_SERVER['REQUEST_METHOD'];
+
+// Auth token validation
+function authenticateUser($db) {
+    $headers = apache_request_headers();
+    $authHeader = $headers['Authorization'] ?? '';
+
+    if (preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
+        $token = $matches[1];
+
+        $stmt = $db->prepare('SELECT u.* FROM users u JOIN sessions s ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > datetime("now")');
+        $stmt->execute([$token]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($user) {
+            return $user;
+        }
+    }
+    return null;
+}
+
+if (!function_exists('apache_request_headers')) {
+    function apache_request_headers() {
+        $arh = array();
+        $rx_http = '/\AHTTP_/';
+        foreach($_SERVER as $key => $val) {
+            if( preg_match($rx_http, $key) ) {
+                $arh_key = preg_replace($rx_http, '', $key);
+                $rx_matches = array();
+                $rx_matches = explode('_', $arh_key);
+                if( count($rx_matches) > 0 and strlen($arh_key) > 2 ) {
+                    foreach($rx_matches as $ak_key => $ak_val) $rx_matches[$ak_key] = ucfirst(strtolower($ak_val));
+                    $arh_key = implode('-', $rx_matches);
+                }
+                $arh[$arh_key] = $val;
+            }
+        }
+        return( $arh );
+    }
+}
+
+try {
+    if ($requestUri === '/api/login' && $requestMethod === 'POST') {
+        $data = json_decode(file_get_contents('php://input'), true);
+        $username = $data['username'] ?? '';
+        $password = $data['password'] ?? '';
+
+        $stmt = $db->prepare('SELECT * FROM users WHERE username = ?');
+        $stmt->execute([$username]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($user && password_verify($password, $user['password_hash'])) {
+            $token = bin2hex(random_bytes(32));
+            $expiresAt = date('Y-m-d H:i:s', strtotime('+24 hours'));
+
+            $stmt = $db->prepare('INSERT INTO sessions (user_id, token, expires_at) VALUES (?, ?, ?)');
+            $stmt->execute([$user['id'], $token, $expiresAt]);
+
+            jsonResponse(['token' => $token, 'user' => ['id' => $user['id'], 'username' => $user['username'], 'role' => $user['role']]]);
+        } else {
+            logError("Failed login attempt for username: $username");
+            jsonResponse(['error' => 'Invalid credentials'], 401);
+        }
+    }
+    elseif ($requestUri === '/api/logout' && $requestMethod === 'POST') {
+        $headers = apache_request_headers();
+        $authHeader = $headers['Authorization'] ?? '';
+
+        if (preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
+            $token = $matches[1];
+            $stmt = $db->prepare('DELETE FROM sessions WHERE token = ?');
+            $stmt->execute([$token]);
+        }
+        jsonResponse(['message' => 'Logged out']);
+    }
+    elseif (preg_match('/^\/api\/camps(\/(\d+))?$/', $requestUri, $matches) && in_array($requestMethod, ['POST', 'PUT', 'DELETE'])) {
+        $user = authenticateUser($db);
+        if (!$user) {
+            jsonResponse(['error' => 'Unauthorized'], 401);
+        }
+
+        $campId = $matches[2] ?? null;
+
+        if ($requestMethod === 'POST') {
+            $data = $_POST;
+            if (empty($data)) {
+                $data = json_decode(file_get_contents('php://input'), true) ?? [];
+            }
+
+            $stmt = $db->prepare('INSERT INTO camps (club_id, title, age_from, age_to, description, location_lat, location_lng, type, period, cost, accessibility) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt->execute([
+                $user['id'], $data['title'] ?? '', $data['age_from'] ?? null, $data['age_to'] ?? null, $data['description'] ?? '',
+                $data['location_lat'] ?? null, $data['location_lng'] ?? null, $data['type'] ?? '', $data['period'] ?? '', $data['cost'] ?? '', $data['accessibility'] ?? ''
+            ]);
+            $newCampId = $db->lastInsertId();
+
+            // Handle image uploads
+            if (isset($_FILES['images'])) {
+                $stmtImg = $db->prepare('INSERT INTO camp_images (camp_id, image_url) VALUES (?, ?)');
+                $files = $_FILES['images'];
+                for ($i = 0; $i < count($files['name']); $i++) {
+                    if ($files['error'][$i] === UPLOAD_ERR_OK) {
+                        $ext = pathinfo($files['name'][$i], PATHINFO_EXTENSION);
+                        $filename = uniqid() . '.' . $ext;
+                        $destination = __DIR__ . '/uploads/' . $filename;
+                        if (move_uploaded_file($files['tmp_name'][$i], $destination)) {
+                            $stmtImg->execute([$newCampId, '/uploads/' . $filename]);
+                        }
+                    }
+                }
+            }
+
+            jsonResponse(['message' => 'Camp created successfully', 'id' => $newCampId]);
+        }
+        elseif ($requestMethod === 'PUT' && $campId) {
+            // PHP doesn't parse multipart/form-data for PUT out of the box easily.
+            // A common workaround is to use POST with a _method field, but for simplicity we assume
+            // json if editing without images, or we can just parse php://input.
+            $data = json_decode(file_get_contents('php://input'), true);
+
+            // Check ownership
+            $checkStmt = $db->prepare('SELECT club_id FROM camps WHERE id = ?');
+            $checkStmt->execute([$campId]);
+            $camp = $checkStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$camp || ($camp['club_id'] !== $user['id'] && $user['role'] !== 'admin')) {
+                jsonResponse(['error' => 'Forbidden'], 403);
+            }
+
+            $stmt = $db->prepare('UPDATE camps SET title = ?, age_from = ?, age_to = ?, description = ?, location_lat = ?, location_lng = ?, type = ?, period = ?, cost = ?, accessibility = ?, is_active = ? WHERE id = ?');
+            $stmt->execute([
+                $data['title'] ?? '', $data['age_from'] ?? null, $data['age_to'] ?? null, $data['description'] ?? '',
+                $data['location_lat'] ?? null, $data['location_lng'] ?? null, $data['type'] ?? '', $data['period'] ?? '',
+                $data['cost'] ?? '', $data['accessibility'] ?? '', $data['is_active'] ?? 1, $campId
+            ]);
+
+            jsonResponse(['message' => 'Camp updated successfully']);
+        }
+        elseif ($requestMethod === 'DELETE' && $campId) {
+            $checkStmt = $db->prepare('SELECT club_id FROM camps WHERE id = ?');
+            $checkStmt->execute([$campId]);
+            $camp = $checkStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$camp || ($camp['club_id'] !== $user['id'] && $user['role'] !== 'admin')) {
+                jsonResponse(['error' => 'Forbidden'], 403);
+            }
+
+            $stmt = $db->prepare('DELETE FROM camps WHERE id = ?');
+            $stmt->execute([$campId]);
+            jsonResponse(['message' => 'Camp deleted successfully']);
+        }
+    }
+    elseif ($requestUri === '/api/admin/users' && $requestMethod === 'POST') {
+        $user = authenticateUser($db);
+        if (!$user || $user['role'] !== 'admin') {
+            jsonResponse(['error' => 'Forbidden'], 403);
+        }
+
+        $data = json_decode(file_get_contents('php://input'), true);
+        $username = $data['username'] ?? '';
+        $password = $data['password'] ?? '';
+        $clubName = $data['club_name'] ?? '';
+        $contactInfo = $data['contact_info'] ?? '';
+
+        if (!$username || !$password) {
+            jsonResponse(['error' => 'Username and password are required'], 400);
+        }
+
+        $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
+
+        try {
+            $stmt = $db->prepare('INSERT INTO users (username, password_hash, role, club_name, contact_info) VALUES (?, ?, ?, ?, ?)');
+            $stmt->execute([$username, $hashedPassword, 'club', $clubName, $contactInfo]);
+            jsonResponse(['message' => 'Club user created successfully', 'id' => $db->lastInsertId()]);
+        } catch (PDOException $e) {
+            if ($e->getCode() == 23000) { // Integrity constraint violation (UNIQUE constraint)
+                jsonResponse(['error' => 'Username already exists'], 400);
+            }
+            throw $e;
+        }
+    }
+    elseif ($requestUri === '/api/admin/users' && $requestMethod === 'GET') {
+        $user = authenticateUser($db);
+        if (!$user || $user['role'] !== 'admin') {
+            jsonResponse(['error' => 'Forbidden'], 403);
+        }
+
+        $stmt = $db->prepare('SELECT id, username, role, club_name, contact_info FROM users WHERE role = "club"');
+        $stmt->execute();
+        $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        jsonResponse($users);
+    }
+    elseif ($requestUri === '/api/camps' && $requestMethod === 'GET') {
+        $query = 'SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id';
+        $params = [];
+        $whereAdded = false;
+
+        if (isset($_GET['club_id'])) {
+            $query .= ' WHERE c.club_id = ?';
+            $params[] = $_GET['club_id'];
+            $whereAdded = true;
+        } elseif (isset($_GET['all']) && $_GET['all'] == 1) {
+            $query .= ' WHERE 1=1'; // Admin wants all
+            $whereAdded = true;
+        } else {
+            $query .= ' WHERE c.is_active = 1';
+            $whereAdded = true;
+        }
+
+        if (isset($_GET['age'])) {
+            $age = (int)$_GET['age'];
+            $query .= ' AND (c.age_from <= ? AND c.age_to >= ?)';
+            $params[] = $age;
+            $params[] = $age;
+        }
+
+        if (isset($_GET['type']) && !empty($_GET['type'])) {
+            $query .= ' AND c.type = ?';
+            $params[] = $_GET['type'];
+        }
+
+        // Basic geographic bounds filtering
+        if (isset($_GET['minLat']) && isset($_GET['maxLat']) && isset($_GET['minLng']) && isset($_GET['maxLng'])) {
+            $query .= ' AND (c.location_lat BETWEEN ? AND ? AND c.location_lng BETWEEN ? AND ?)';
+            $params[] = $_GET['minLat'];
+            $params[] = $_GET['maxLat'];
+            $params[] = $_GET['minLng'];
+            $params[] = $_GET['maxLng'];
+        }
+
+        $stmt = $db->prepare($query);
+        $stmt->execute($params);
+        $camps = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Fetch images for camps
+        foreach ($camps as &$camp) {
+            $stmtImg = $db->prepare('SELECT image_url FROM camp_images WHERE camp_id = ?');
+            $stmtImg->execute([$camp['id']]);
+            $camp['images'] = $stmtImg->fetchAll(PDO::FETCH_COLUMN);
+        }
+
+        jsonResponse($camps);
+    }
+    else {
+        jsonResponse(['error' => 'Not Found'], 404);
+    }
+} catch (Exception $e) {
+    logError($e->getMessage());
+    jsonResponse(['error' => 'Internal Server Error'], 500);
+}

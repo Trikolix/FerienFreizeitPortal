@@ -1,0 +1,46 @@
+[Thu May 21 05:04:27 2026] PHP 8.3.6 Development Server (http://localhost:8000) started
+[Thu May 21 05:04:41 2026] [::1]:42194 Accepted
+[Thu May 21 05:04:41 2026] [::1]:42194 [401]: POST /api/login
+[Thu May 21 05:04:41 2026] [::1]:42194 Closing
+[Thu May 21 05:05:38 2026] [::1]:55740 Accepted
+[Thu May 21 05:05:38 2026] [::1]:55740 [200]: POST /api/login
+[Thu May 21 05:05:38 2026] [::1]:55740 Closing
+[Thu May 21 05:05:52 2026] [::1]:48664 Accepted
+[Thu May 21 05:05:52 2026] [::1]:48664 [200]: POST /api/logout
+[Thu May 21 05:05:52 2026] [::1]:48664 Closing
+[Thu May 21 05:06:23 2026] [::1]:35230 Accepted
+[Thu May 21 05:06:23 2026] [::1]:35230 [200]: GET /api/camps
+[Thu May 21 05:06:23 2026] [::1]:35230 Closing
+[Thu May 21 05:06:54 2026] [::1]:33476 Accepted
+[Thu May 21 05:06:54 2026] [::1]:33476 [200]: POST /api/login
+[Thu May 21 05:06:54 2026] [::1]:33476 Closing
+[Thu May 21 05:06:54 2026] [::1]:33490 Accepted
+[Thu May 21 05:06:54 2026] [::1]:33490 [200]: POST /api/camps
+[Thu May 21 05:06:54 2026] [::1]:33490 Closing
+[Thu May 21 05:07:08 2026] [::1]:54722 Accepted
+[Thu May 21 05:07:08 2026] [::1]:54722 [200]: POST /api/login
+[Thu May 21 05:07:08 2026] [::1]:54722 Closing
+[Thu May 21 05:07:08 2026] [::1]:54728 Accepted
+[Thu May 21 05:07:08 2026] [::1]:54728 [200]: PUT /api/camps/1
+[Thu May 21 05:07:08 2026] [::1]:54728 Closing
+[Thu May 21 05:07:23 2026] [::1]:45192 Accepted
+[Thu May 21 05:07:23 2026] [::1]:45192 [200]: POST /api/login
+[Thu May 21 05:07:23 2026] [::1]:45192 Closing
+[Thu May 21 05:07:23 2026] [::1]:45196 Accepted
+[Thu May 21 05:07:23 2026] [::1]:45196 [200]: DELETE /api/camps/1
+[Thu May 21 05:07:23 2026] [::1]:45196 Closing
+[Thu May 21 05:07:54 2026] [::1]:56286 Accepted
+[Thu May 21 05:07:54 2026] [::1]:56286 [200]: POST /api/login
+[Thu May 21 05:07:54 2026] [::1]:56286 Closing
+[Thu May 21 05:07:54 2026] [::1]:56288 Accepted
+[Thu May 21 05:07:54 2026] [::1]:56288 [200]: POST /api/admin/users
+[Thu May 21 05:07:54 2026] [::1]:56288 Closing
+[Thu May 21 05:08:12 2026] [::1]:55202 Accepted
+[Thu May 21 05:08:12 2026] [::1]:55202 [200]: POST /api/login
+[Thu May 21 05:08:12 2026] [::1]:55202 Closing
+[Thu May 21 05:08:12 2026] [::1]:55218 Accepted
+[Thu May 21 05:08:12 2026] [::1]:55218 [200]: GET /api/admin/users
+[Thu May 21 05:08:12 2026] [::1]:55218 Closing
+[Thu May 21 05:57:27 2026] [::1]:38734 Accepted
+[Thu May 21 05:57:27 2026] [::1]:38734 [200]: GET /api/camps?
+[Thu May 21 05:57:27 2026] [::1]:38734 Closing
