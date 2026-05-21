@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { KeyRound, LogIn, UserRound } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 
 export const LoginPage: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const login = useAuthStore(state => state.login);
+  const login = useAuthStore((state) => state.login);
   const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setError('');
 
     try {
@@ -26,46 +27,68 @@ export const LoginPage: React.FC = () => {
         setError(data.error || 'Login fehlgeschlagen');
       } else {
         login(data.user, data.token);
-        if (data.user.role === 'admin') {
-          navigate('/admin');
-        } else {
-          navigate('/dashboard');
-        }
+        navigate(data.user.role === 'admin' ? '/admin' : '/dashboard');
       }
-    } catch (err) {
+    } catch {
       setError('Netzwerkfehler');
     }
   };
 
   return (
-    <div style={{ maxWidth: '400px', margin: '2rem auto', padding: '1rem', border: '1px solid var(--border-color)' }}>
-      <h1>Login für Jugendvereine</h1>
-      {error && <p style={{ color: 'red' }} role="alert">{error}</p>}
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        <div>
-          <label htmlFor="username" style={{ display: 'block' }}>Benutzername:</label>
-          <input
-            id="username"
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-            style={{ width: '100%' }}
-          />
+    <div className="auth-page">
+      <section className="auth-card">
+        <div className="auth-visual" aria-hidden="true">
+          <span className="auth-badge">Vereinsbereich</span>
+          <h1>Angebote pflegen, veröffentlichen und aktuell halten.</h1>
         </div>
-        <div>
-          <label htmlFor="password" style={{ display: 'block' }}>Passwort:</label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            style={{ width: '100%' }}
-          />
-        </div>
-        <button type="submit" style={{ padding: '0.5rem' }}>Anmelden</button>
-      </form>
+
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <div>
+            <span className="eyebrow">Login</span>
+            <h2>Für Jugendvereine</h2>
+            <p>Nach der Anmeldung kannst du Freizeiten verwalten und neue Angebote einstellen.</p>
+          </div>
+
+          {error && (
+            <p className="alert" role="alert">
+              {error}
+            </p>
+          )}
+
+          <label className="field">
+            <span>Benutzername</span>
+            <div className="input-with-icon">
+              <UserRound size={18} />
+              <input
+                type="text"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                required
+                autoComplete="username"
+              />
+            </div>
+          </label>
+
+          <label className="field">
+            <span>Passwort</span>
+            <div className="input-with-icon">
+              <KeyRound size={18} />
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+                autoComplete="current-password"
+              />
+            </div>
+          </label>
+
+          <button className="primary-action" type="submit">
+            <LogIn size={18} />
+            Anmelden
+          </button>
+        </form>
+      </section>
     </div>
   );
 };

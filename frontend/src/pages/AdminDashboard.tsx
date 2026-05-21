@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { useAuthStore } from '../store/authStore';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Building2, Pencil, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
+import { useAuthStore } from '../store/authStore';
 
 interface Camp {
   id: number;
@@ -33,6 +34,30 @@ export const AdminDashboard: React.FC = () => {
   const [formData, setFormData] = useState({ username: '', password: '', club_name: '', contact_info: '' });
   const [error, setError] = useState('');
 
+  const fetchCamps = async () => {
+    try {
+      const res = await fetch('/api/camps?all=1', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      setCamps(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchClubs = async () => {
+    try {
+      const res = await fetch('/api/admin/users', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      setClubs(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     if (!user || user.role !== 'admin') {
       navigate('/login');
@@ -42,21 +67,6 @@ export const AdminDashboard: React.FC = () => {
     }
   }, [user, navigate]);
 
-  const fetchCamps = async () => {
-    try {
-      // The backend /api/camps GET logic fetches active by default, or all if we pass club_id.
-      // To get ALL camps for admin, we need a small adjustment on backend or a specific admin endpoint.
-      // We will adjust backend to return all camps if admin.
-      const res = await fetch('/api/camps?all=1', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await res.json();
-      setCamps(data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   const handleEditCamp = async (camp: Camp) => {
     const newTitle = prompt('Neuer Titel:', camp.title);
     if (newTitle) {
@@ -64,9 +74,9 @@ export const AdminDashboard: React.FC = () => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ ...camp, title: newTitle })
+        body: JSON.stringify({ ...camp, title: newTitle }),
       });
       fetchCamps();
     }
@@ -76,26 +86,14 @@ export const AdminDashboard: React.FC = () => {
     if (confirm('Wirklich löschen?')) {
       await fetch(`/api/camps/${id}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
       fetchCamps();
     }
   };
 
-  const fetchClubs = async () => {
-    try {
-      const res = await fetch('/api/admin/users', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const data = await res.json();
-      setClubs(data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setError('');
 
     try {
@@ -103,9 +101,9 @@ export const AdminDashboard: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(formData),
       });
 
       const data = await res.json();
@@ -115,69 +113,109 @@ export const AdminDashboard: React.FC = () => {
         setFormData({ username: '', password: '', club_name: '', contact_info: '' });
         fetchClubs();
       }
-    } catch (err) {
+    } catch {
       setError('Netzwerkfehler');
     }
   };
 
   return (
-    <div>
-      <h1>Admin Dashboard</h1>
+    <div className="dashboard-page">
+      <section className="page-heading">
+        <span className="eyebrow">Administration</span>
+        <h1>Portal moderieren</h1>
+        <p>Vereine verwalten, Angebote prüfen und die Datenqualität der Plattform im Blick behalten.</p>
+      </section>
 
-      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid var(--border-color)' }}>
-        <h2>Neuen Jugendverein anlegen</h2>
-        {error && <p style={{color: 'red'}}>{error}</p>}
-        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: '1rem', gridTemplateColumns: '1fr 1fr' }}>
-          <div>
-            <label>Benutzername:</label>
-            <input type="text" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} required style={{width: '100%'}}/>
-          </div>
-          <div>
-            <label>Passwort:</label>
-            <input type="password" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} required style={{width: '100%'}}/>
-          </div>
-          <div>
-            <label>Vereinsname:</label>
-            <input type="text" value={formData.club_name} onChange={e => setFormData({...formData, club_name: e.target.value})} style={{width: '100%'}}/>
-          </div>
-          <div>
-            <label>Kontaktinfo:</label>
-            <input type="text" value={formData.contact_info} onChange={e => setFormData({...formData, contact_info: e.target.value})} style={{width: '100%'}}/>
-          </div>
-          <div style={{ gridColumn: 'span 2' }}>
-            <button type="submit">Verein anlegen</button>
+      <section className="metric-row" aria-label="Kennzahlen">
+        <div className="metric-card">
+          <Building2 size={22} />
+          <strong>{clubs.length}</strong>
+          <span>registrierte Vereine</span>
+        </div>
+        <div className="metric-card">
+          <ShieldCheck size={22} />
+          <strong>{camps.length}</strong>
+          <span>Freizeiten im System</span>
+        </div>
+      </section>
+
+      <section className="form-panel">
+        <div className="section-heading">
+          <h2>Neuen Jugendverein anlegen</h2>
+          <span>Zugangsdaten und Kontakt speichern</span>
+        </div>
+        {error && <p className="alert">{error}</p>}
+        <form className="dashboard-form" onSubmit={handleSubmit}>
+          <label className="field">
+            <span>Benutzername</span>
+            <input type="text" value={formData.username} onChange={(event) => setFormData({ ...formData, username: event.target.value })} required />
+          </label>
+          <label className="field">
+            <span>Passwort</span>
+            <input type="password" value={formData.password} onChange={(event) => setFormData({ ...formData, password: event.target.value })} required />
+          </label>
+          <label className="field">
+            <span>Vereinsname</span>
+            <input type="text" value={formData.club_name} onChange={(event) => setFormData({ ...formData, club_name: event.target.value })} />
+          </label>
+          <label className="field">
+            <span>Kontaktinfo</span>
+            <input type="text" value={formData.contact_info} onChange={(event) => setFormData({ ...formData, contact_info: event.target.value })} />
+          </label>
+          <div className="form-actions">
+            <button className="primary-action" type="submit">
+              <UserPlus size={18} />
+              Verein anlegen
+            </button>
           </div>
         </form>
       </section>
 
-      <section style={{ marginBottom: '2rem' }}>
-        <h2>Registrierte Vereine</h2>
-        {clubs.length === 0 ? <p>Keine Vereine registriert.</p> : (
-          <ul style={{ listStyle: 'none', padding: 0 }}>
-            {clubs.map(club => (
-              <li key={club.id} style={{ border: '1px solid var(--border-color)', margin: '1rem 0', padding: '1rem' }}>
+      <section className="list-panel">
+        <div className="section-heading">
+          <h2>Registrierte Vereine</h2>
+          <span>{clubs.length} Konten</span>
+        </div>
+        {clubs.length === 0 ? (
+          <p className="empty-line">Keine Vereine registriert.</p>
+        ) : (
+          <ul className="club-grid">
+            {clubs.map((club) => (
+              <li key={club.id} className="club-card">
+                <span className="club-icon"><Building2 size={21} /></span>
                 <h3>{club.club_name || club.username}</h3>
-                <p><strong>Benutzername:</strong> {club.username}</p>
-                <p><strong>Kontakt:</strong> {club.contact_info}</p>
+                <p>{club.username}</p>
+                <small>{club.contact_info || 'Keine Kontaktinfo hinterlegt'}</small>
               </li>
             ))}
           </ul>
         )}
       </section>
 
-      <section>
-        <h2>Alle Freizeiten (Moderation)</h2>
-        {camps.length === 0 ? <p>Keine Freizeiten vorhanden.</p> : (
-          <ul style={{ listStyle: 'none', padding: 0 }}>
-            {camps.map(camp => (
-              <li key={camp.id} style={{ border: '1px solid var(--border-color)', margin: '1rem 0', padding: '1rem', display: 'flex', justifyContent: 'space-between' }}>
-                <div>
-                  <h3>{camp.title}</h3>
-                  <p><strong>Anbieter:</strong> {camp.club_name}</p>
+      <section className="list-panel">
+        <div className="section-heading">
+          <h2>Alle Freizeiten</h2>
+          <span>Moderation</span>
+        </div>
+        {camps.length === 0 ? (
+          <p className="empty-line">Keine Freizeiten vorhanden.</p>
+        ) : (
+          <ul className="management-list">
+            {camps.map((camp) => (
+              <li key={camp.id} className="management-item">
+                <div className="management-main no-thumb">
+                  <div>
+                    <h3>{camp.title}</h3>
+                    <p>{camp.club_name} · {camp.type} · {camp.age_from}-{camp.age_to} Jahre</p>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
-                  <button onClick={() => handleEditCamp(camp)}>Titel bearbeiten</button>
-                  <button onClick={() => handleDeleteCamp(camp.id)}>Löschen</button>
+                <div className="item-actions">
+                  <button className="icon-button" onClick={() => handleEditCamp(camp)} aria-label={`${camp.title} bearbeiten`}>
+                    <Pencil size={17} />
+                  </button>
+                  <button className="danger-action" onClick={() => handleDeleteCamp(camp.id)} aria-label={`${camp.title} löschen`}>
+                    <Trash2 size={17} />
+                  </button>
                 </div>
               </li>
             ))}

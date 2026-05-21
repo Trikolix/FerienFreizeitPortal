@@ -1,11 +1,30 @@
 import { create } from 'zustand';
 
+export type Theme = 'default' | 'colorblind' | 'deuteranopia' | 'high-contrast';
+
 interface ThemeState {
-  theme: 'default' | 'high-contrast' | 'colorblind';
-  setTheme: (theme: 'default' | 'high-contrast' | 'colorblind') => void;
+  theme: Theme;
+  setTheme: (theme: Theme) => void;
 }
 
+const getInitialTheme = (): Theme => {
+  const savedTheme = localStorage.getItem('theme');
+  if (
+    savedTheme === 'default' ||
+    savedTheme === 'colorblind' ||
+    savedTheme === 'deuteranopia' ||
+    savedTheme === 'high-contrast'
+  ) {
+    return savedTheme;
+  }
+
+  return 'default';
+};
+
 export const useThemeStore = create<ThemeState>((set) => ({
-  theme: 'default',
-  setTheme: (theme) => set({ theme }),
+  theme: getInitialTheme(),
+  setTheme: (theme) => {
+    localStorage.setItem('theme', theme);
+    set({ theme });
+  },
 }));

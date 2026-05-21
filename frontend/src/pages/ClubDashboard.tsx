@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { useAuthStore } from '../store/authStore';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { CheckCircle2, ImagePlus, Pencil, Plus, Trash2, XCircle } from 'lucide-react';
+import { useAuthStore } from '../store/authStore';
 
 interface Camp {
   id: number;
@@ -26,21 +27,8 @@ export const ClubDashboard: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
 
-  useEffect(() => {
-    if (!user || user.role !== 'club') {
-      navigate('/login');
-    } else {
-      fetchCamps();
-    }
-  }, [user, navigate]);
-
   const fetchCamps = async () => {
     try {
-      // In a real app we might have a specific /api/my-camps endpoint,
-      // but for simplicity we can fetch all and filter or add an endpoint.
-      // Assuming GET /api/camps returns all active, but we need inactive too for the club.
-      // We will adjust the backend query slightly or add /api/club/camps if needed.
-      // For now, we will add an endpoint in backend later if necessary, or just use a generic fetch.
       const res = await fetch(`/api/camps?club_id=${user?.id}`);
       const data = await res.json();
       setCamps(data);
@@ -49,36 +37,38 @@ export const ClubDashboard: React.FC = () => {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    if (!user || user.role !== 'club') {
+      navigate('/login');
+    } else {
+      fetchCamps();
+    }
+  }, [user, navigate]);
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     const method = isEditing ? 'PUT' : 'POST';
     const url = isEditing ? `/api/camps/${formData.id}` : '/api/camps';
 
     try {
-      let reqBody: any;
-      let headers: any = {
-        'Authorization': `Bearer ${token}`
+      let reqBody: BodyInit;
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
       };
 
-      if (!isEditing && selectedFiles && selectedFiles.length > 0) {
+      if (!isEditing && selectedFiles?.length) {
         const formDataObj = new FormData();
         Object.entries(formData).forEach(([key, value]) => {
-            formDataObj.append(key, value as string);
+          if (value !== undefined) formDataObj.append(key, String(value));
         });
-        for (let i = 0; i < selectedFiles.length; i++) {
-          formDataObj.append('images[]', selectedFiles[i]);
-        }
+        Array.from(selectedFiles).forEach((file) => formDataObj.append('images[]', file));
         reqBody = formDataObj;
       } else {
         headers['Content-Type'] = 'application/json';
         reqBody = JSON.stringify(formData);
       }
 
-      await fetch(url, {
-        method,
-        headers,
-        body: reqBody
-      });
+      await fetch(url, { method, headers, body: reqBody });
       setIsEditing(false);
       setFormData({});
       setSelectedFiles(null);
@@ -92,7 +82,7 @@ export const ClubDashboard: React.FC = () => {
     try {
       await fetch(`/api/camps/${id}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
       fetchCamps();
     } catch (error) {
@@ -111,9 +101,9 @@ export const ClubDashboard: React.FC = () => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ ...camp, is_active: camp.is_active ? 0 : 1 })
+        body: JSON.stringify({ ...camp, is_active: camp.is_active ? 0 : 1 }),
       });
       fetchCamps();
     } catch (error) {
@@ -122,84 +112,115 @@ export const ClubDashboard: React.FC = () => {
   };
 
   return (
-    <div>
-      <h1>Vereins-Dashboard</h1>
+    <div className="dashboard-page">
+      <section className="page-heading">
+        <span className="eyebrow">Vereins-Dashboard</span>
+        <h1>Freizeiten verwalten</h1>
+        <p>Lege Angebote an, aktualisiere Details und steuere die Sichtbarkeit für die öffentliche Suche.</p>
+      </section>
 
-      <section style={{ marginBottom: '2rem', padding: '1rem', border: '1px solid var(--border-color)' }}>
-        <h2>{isEditing ? 'Freizeit bearbeiten' : 'Neue Freizeit anlegen'}</h2>
-        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: '1rem', gridTemplateColumns: '1fr 1fr' }}>
-          <div>
-            <label>Titel:</label>
-            <input type="text" value={formData.title || ''} onChange={e => setFormData({...formData, title: e.target.value})} required style={{width: '100%'}}/>
-          </div>
-          <div>
-            <label>Art:</label>
-            <input type="text" value={formData.type || ''} onChange={e => setFormData({...formData, type: e.target.value})} required style={{width: '100%'}}/>
-          </div>
-          <div>
-            <label>Alter von:</label>
-            <input type="number" value={formData.age_from || ''} onChange={e => setFormData({...formData, age_from: parseInt(e.target.value)})} style={{width: '100%'}}/>
-          </div>
-          <div>
-            <label>Alter bis:</label>
-            <input type="number" value={formData.age_to || ''} onChange={e => setFormData({...formData, age_to: parseInt(e.target.value)})} style={{width: '100%'}}/>
-          </div>
-          <div style={{ gridColumn: 'span 2' }}>
-            <label>Beschreibung:</label>
-            <textarea value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})} required style={{width: '100%', height: '100px'}}/>
-          </div>
-          <div>
-            <label>Zeitraum:</label>
-            <input type="text" value={formData.period || ''} onChange={e => setFormData({...formData, period: e.target.value})} style={{width: '100%'}}/>
-          </div>
-          <div>
-            <label>Kosten:</label>
-            <input type="text" value={formData.cost || ''} onChange={e => setFormData({...formData, cost: e.target.value})} style={{width: '100%'}}/>
-          </div>
-          <div style={{ gridColumn: 'span 2' }}>
-            <label>Barrierefreiheit:</label>
-            <input type="text" value={formData.accessibility || ''} onChange={e => setFormData({...formData, accessibility: e.target.value})} style={{width: '100%'}}/>
-          </div>
-          <div>
-            <label>Latitude:</label>
-            <input type="number" step="any" value={formData.location_lat || ''} onChange={e => setFormData({...formData, location_lat: parseFloat(e.target.value)})} style={{width: '100%'}}/>
-          </div>
-          <div>
-            <label>Longitude:</label>
-            <input type="number" step="any" value={formData.location_lng || ''} onChange={e => setFormData({...formData, location_lng: parseFloat(e.target.value)})} style={{width: '100%'}}/>
-          </div>
+      <section className="form-panel">
+        <div className="section-heading">
+          <h2>{isEditing ? 'Freizeit bearbeiten' : 'Neue Freizeit anlegen'}</h2>
+          <span>{isEditing ? 'Änderungen werden direkt gespeichert' : 'Alle Pflichtfelder sauber ausfüllen'}</span>
+        </div>
+
+        <form className="dashboard-form" onSubmit={handleSubmit}>
+          <label className="field">
+            <span>Titel</span>
+            <input type="text" value={formData.title || ''} onChange={(event) => setFormData({ ...formData, title: event.target.value })} required />
+          </label>
+          <label className="field">
+            <span>Art</span>
+            <input type="text" value={formData.type || ''} onChange={(event) => setFormData({ ...formData, type: event.target.value })} required />
+          </label>
+          <label className="field">
+            <span>Alter von</span>
+            <input type="number" value={formData.age_from || ''} onChange={(event) => setFormData({ ...formData, age_from: Number(event.target.value) })} />
+          </label>
+          <label className="field">
+            <span>Alter bis</span>
+            <input type="number" value={formData.age_to || ''} onChange={(event) => setFormData({ ...formData, age_to: Number(event.target.value) })} />
+          </label>
+          <label className="field field-wide">
+            <span>Beschreibung</span>
+            <textarea value={formData.description || ''} onChange={(event) => setFormData({ ...formData, description: event.target.value })} required />
+          </label>
+          <label className="field">
+            <span>Zeitraum</span>
+            <input type="text" value={formData.period || ''} onChange={(event) => setFormData({ ...formData, period: event.target.value })} />
+          </label>
+          <label className="field">
+            <span>Kosten</span>
+            <input type="text" value={formData.cost || ''} onChange={(event) => setFormData({ ...formData, cost: event.target.value })} />
+          </label>
+          <label className="field field-wide">
+            <span>Barrierefreiheit</span>
+            <input type="text" value={formData.accessibility || ''} onChange={(event) => setFormData({ ...formData, accessibility: event.target.value })} />
+          </label>
+          <label className="field">
+            <span>Latitude</span>
+            <input type="number" step="any" value={formData.location_lat || ''} onChange={(event) => setFormData({ ...formData, location_lat: Number(event.target.value) })} />
+          </label>
+          <label className="field">
+            <span>Longitude</span>
+            <input type="number" step="any" value={formData.location_lng || ''} onChange={(event) => setFormData({ ...formData, location_lng: Number(event.target.value) })} />
+          </label>
           {!isEditing && (
-            <div style={{ gridColumn: 'span 2' }}>
-              <label>Bilder hochladen:</label>
-              <input type="file" multiple accept="image/*" onChange={(e) => setSelectedFiles(e.target.files)} style={{width: '100%'}}/>
-            </div>
+            <label className="field field-wide file-field">
+              <span>Bilder hochladen</span>
+              <input type="file" multiple accept="image/*" onChange={(event) => setSelectedFiles(event.target.files)} />
+            </label>
           )}
-          <div style={{ gridColumn: 'span 2' }}>
-            <button type="submit">{isEditing ? 'Speichern' : 'Anlegen'}</button>
-            {isEditing && <button type="button" onClick={() => { setIsEditing(false); setFormData({}); }} style={{marginLeft: '1rem'}}>Abbrechen</button>}
+          <div className="form-actions">
+            <button className="primary-action" type="submit">
+              {isEditing ? <CheckCircle2 size={18} /> : <Plus size={18} />}
+              {isEditing ? 'Speichern' : 'Anlegen'}
+            </button>
+            {isEditing && (
+              <button className="secondary-action" type="button" onClick={() => { setIsEditing(false); setFormData({}); }}>
+                Abbrechen
+              </button>
+            )}
           </div>
         </form>
       </section>
 
-      <section>
-        <h2>Meine Freizeiten</h2>
-        {camps.length === 0 ? <p>Keine Freizeiten vorhanden.</p> : (
-          <ul style={{ listStyle: 'none', padding: 0 }}>
-            {camps.map(camp => (
-              <li key={camp.id} style={{ border: '1px solid var(--border-color)', margin: '1rem 0', padding: '1rem', display: 'flex', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                  {camp.images && camp.images.length > 0 && (
-                    <img src={camp.images[0]} alt="Camp" style={{ width: '80px', height: '80px', objectFit: 'cover', borderRadius: '4px' }} />
-                  )}
+      <section className="list-panel">
+        <div className="section-heading">
+          <h2>Meine Freizeiten</h2>
+          <span>{camps.length} Angebote</span>
+        </div>
+        {camps.length === 0 ? (
+          <div className="empty-state compact">
+            <ImagePlus size={32} />
+            <p>Keine Freizeiten vorhanden.</p>
+          </div>
+        ) : (
+          <ul className="management-list">
+            {camps.map((camp) => (
+              <li key={camp.id} className="management-item">
+                <div className="management-main">
+                  {camp.images?.length ? <img src={camp.images[0]} alt="" /> : <span className="thumb-placeholder"><ImagePlus size={22} /></span>}
                   <div>
                     <h3>{camp.title}</h3>
-                    <p>Status: {camp.is_active ? 'Aktiv' : 'Deaktiviert'}</p>
+                    <p>{camp.type} · {camp.age_from}-{camp.age_to} Jahre</p>
+                    <span className={`status-pill ${camp.is_active ? 'is-live' : 'is-muted'}`}>
+                      {camp.is_active ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
+                      {camp.is_active ? 'Aktiv' : 'Deaktiviert'}
+                    </span>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
-                  <button onClick={() => handleEdit(camp)}>Bearbeiten</button>
-                  <button onClick={() => toggleActive(camp)}>{camp.is_active ? 'Deaktivieren' : 'Aktivieren'}</button>
-                  <button onClick={() => handleDelete(camp.id)}>Löschen</button>
+                <div className="item-actions">
+                  <button className="icon-button" onClick={() => handleEdit(camp)} aria-label={`${camp.title} bearbeiten`}>
+                    <Pencil size={17} />
+                  </button>
+                  <button className="secondary-action" onClick={() => toggleActive(camp)}>
+                    {camp.is_active ? 'Deaktivieren' : 'Aktivieren'}
+                  </button>
+                  <button className="danger-action" onClick={() => handleDelete(camp.id)} aria-label={`${camp.title} löschen`}>
+                    <Trash2 size={17} />
+                  </button>
                 </div>
               </li>
             ))}

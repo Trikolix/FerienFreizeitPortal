@@ -2,7 +2,8 @@ import React from 'react';
 
 export const Impressum: React.FC = () => {
   return (
-    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '2rem' }}>
+    <div className="imprint-page">
+      <span className="eyebrow">Rechtliches</span>
       <h1>Impressum</h1>
 
       <h2>Angaben gemäß § 5 TMG</h2>
@@ -25,12 +26,19 @@ export const Impressum: React.FC = () => {
         01234 Musterstadt
       </p>
 
-      <h2>Haftungsausschluss (Disclaimer)</h2>
+      <h2>Haftungsausschluss</h2>
       <h3>Haftung für Inhalte</h3>
-      <p>Als Diensteanbieter sind wir gemäß § 7 Abs.1 TMG für eigene Inhalte auf diesen Seiten nach den allgemeinen Gesetzen verantwortlich. Nach §§ 8 bis 10 TMG sind wir als Diensteanbieter jedoch nicht verpflichtet, übermittelte oder gespeicherte fremde Informationen zu überwachen oder nach Umständen zu forschen, die auf eine rechtswidrige Tätigkeit hinweisen.</p>
+      <p>
+        Als Diensteanbieter sind wir gemäß § 7 Abs.1 TMG für eigene Inhalte auf diesen Seiten nach den
+        allgemeinen Gesetzen verantwortlich. Nach §§ 8 bis 10 TMG sind wir als Diensteanbieter jedoch
+        nicht verpflichtet, übermittelte oder gespeicherte fremde Informationen zu überwachen.
+      </p>
 
       <h3>Haftung für Links</h3>
-      <p>Unser Angebot enthält Links zu externen Websites Dritter, auf deren Inhalte wir keinen Einfluss haben. Deshalb können wir für diese fremden Inhalte auch keine Gewähr übernehmen.</p>
+      <p>
+        Unser Angebot enthält Links zu externen Websites Dritter, auf deren Inhalte wir keinen Einfluss
+        haben. Deshalb können wir für diese fremden Inhalte auch keine Gewähr übernehmen.
+      </p>
     </div>
   );
 };
