@@ -1,0 +1,14 @@
+{
+  "name": "westsachsen-camps",
+  "version": "1.0.0",
+  "description": "Regionales Webportal für Ferienfreizeiten",
+  "scripts": {
+    "dev:backend": "cd backend && php -S localhost:8000",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "build": "cd frontend && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

@@ -8,8 +8,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
-$db = new PDO('sqlite:' . __DIR__ . '/database.sqlite');
-$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+// Database Connection
+$dbConnection = getenv('DB_CONNECTION') ?: 'sqlite';
+$dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+$dbName = getenv('DB_NAME') ?: 'westsachsen_camps';
+$dbUser = getenv('DB_USER') ?: 'root';
+$dbPass = getenv('DB_PASSWORD') ?: '';
+
+try {
+    if ($dbConnection === 'pgsql') {
+        $dsn = "pgsql:host=$dbHost;dbname=$dbName";
+        $db = new PDO($dsn, $dbUser, $dbPass);
+    } elseif ($dbConnection === 'mysql') {
+        $dsn = "mysql:host=$dbHost;dbname=$dbName;charset=utf8mb4";
+        $db = new PDO($dsn, $dbUser, $dbPass);
+    } else {
+        $db = new PDO('sqlite:' . __DIR__ . '/database.sqlite');
+    }
+    $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+    // Auto-ensure schema if tables don't exist
+    $checkTable = "SELECT 1 FROM users LIMIT 1";
+    try {
+        $db->query($checkTable);
+    } catch (PDOException $e) {
+        $schema = file_get_contents(__DIR__ . '/schema.sql');
+        if ($schema) {
+            // Replace AUTOINCREMENT with serial/auto_increment based on driver if needed,
+            // but we'll use a basic schema replacement for PG/MySQL compatibility.
+            if ($dbConnection === 'pgsql') {
+                $schema = str_replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'SERIAL PRIMARY KEY', $schema);
+                $schema = str_replace('DATETIME', 'TIMESTAMP', $schema);
+            } elseif ($dbConnection === 'mysql') {
+                $schema = str_replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'INT AUTO_INCREMENT PRIMARY KEY', $schema);
+            }
+            $db->exec($schema);
+
+            // Insert default admin if users table is freshly created
+            $hash = password_hash('admin', PASSWORD_BCRYPT);
+            $db->exec("INSERT INTO users (username, password_hash, role) VALUES ('admin', '$hash', 'admin')");
+        }
+    }
+} catch (PDOException $e) {
+    error_log("Database Connection Error: " . $e->getMessage());
+    http_response_code(500);
+    echo json_encode(["error" => "Database Connection Failed"]);
+    exit();
+}
 
 // Central logging
 function logError($message) {
