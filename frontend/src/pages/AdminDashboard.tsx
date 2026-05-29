@@ -23,9 +23,13 @@ interface Camp {
 
 interface ClubUser {
   id: number;
+  email: string;
   username: string;
+  role: 'master_admin' | 'admin' | 'user';
+  display_name: string;
   club_name: string;
   contact_info: string;
+  is_active: number;
 }
 
 const parseJson = async (response: Response) => {
@@ -56,10 +60,15 @@ const fetchJsonArray = async <T,>(url: string, token: string): Promise<T[]> => {
 export const AdminDashboard: React.FC = () => {
   const { user, token } = useAuthStore();
   const navigate = useNavigate();
+  const isMasterAdmin = user?.role === 'master_admin';
+  const isAdmin = user?.role === 'admin' || user?.role === 'master_admin';
   const [clubs, setClubs] = useState<ClubUser[]>([]);
   const [camps, setCamps] = useState<Camp[]>([]);
-  const [formData, setFormData] = useState({ username: '', password: '', club_name: '', contact_info: '' });
+  const [formData, setFormData] = useState({ email: '', display_name: '', role: 'user', contact_info: '' });
   const [error, setError] = useState('');
+  const [editingCampId, setEditingCampId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [deleteCampId, setDeleteCampId] = useState<number | null>(null);
 
   const fetchCamps = async () => {
     if (!token) return;
@@ -84,7 +93,7 @@ export const AdminDashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!user || user.role !== 'admin') {
+    if (!user || !isAdmin) {
       navigate('/login');
       return;
     }
@@ -121,31 +130,52 @@ export const AdminDashboard: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [user, token, navigate]);
+  }, [user, token, navigate, isAdmin]);
 
   const handleEditCamp = async (camp: Camp) => {
-    const newTitle = prompt('Neuer Titel:', camp.title);
-    if (newTitle) {
-      await fetch(`/api/camps/${camp.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ ...camp, title: newTitle }),
-      });
-      fetchCamps();
-    }
+    setEditingCampId(camp.id);
+    setEditTitle(camp.title);
+    setDeleteCampId(null);
+  };
+
+  const handleSaveCampTitle = async (event: React.FormEvent, camp: Camp) => {
+    event.preventDefault();
+    const title = editTitle.trim();
+    if (!title) return;
+
+    await fetch(`/api/camps/${camp.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ ...camp, title }),
+    });
+    setEditingCampId(null);
+    setEditTitle('');
+    fetchCamps();
   };
 
   const handleDeleteCamp = async (id: number) => {
-    if (confirm('Wirklich löschen?')) {
-      await fetch(`/api/camps/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      fetchCamps();
+    await fetch(`/api/camps/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    setDeleteCampId(null);
+    fetchCamps();
+  };
+
+  const handleDeleteUser = async (id: number) => {
+    const res = await fetch(`/api/admin/users/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await parseJson(res);
+    if (!res.ok) {
+      setError(data?.error || 'Nutzer konnte nicht gelöscht werden');
+      return;
     }
+    fetchClubs();
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -166,7 +196,7 @@ export const AdminDashboard: React.FC = () => {
       if (!res.ok) {
         setError(data.error || 'Fehler beim Erstellen');
       } else {
-        setFormData({ username: '', password: '', club_name: '', contact_info: '' });
+        setFormData({ email: '', display_name: '', role: 'user', contact_info: '' });
         fetchClubs();
       }
     } catch {
@@ -197,22 +227,29 @@ export const AdminDashboard: React.FC = () => {
 
       <section className="form-panel">
         <div className="section-heading">
-          <h2>Neuen Jugendverein anlegen</h2>
-          <span>Zugangsdaten und Kontakt speichern</span>
+          <h2>Nutzer einladen</h2>
+          <span>Aktivierung per E-Mail</span>
         </div>
-        {error && <p className="alert">{error}</p>}
-        <form className="dashboard-form" onSubmit={handleSubmit}>
+        {error && (
+          <p className="alert" id="admin-form-error" role="alert">
+            {error}
+          </p>
+        )}
+        <form className="dashboard-form" onSubmit={handleSubmit} aria-describedby={error ? 'admin-form-error' : undefined}>
           <label className="field">
-            <span>Benutzername</span>
-            <input type="text" value={formData.username} onChange={(event) => setFormData({ ...formData, username: event.target.value })} required />
+            <span>E-Mail</span>
+            <input type="email" value={formData.email} onChange={(event) => setFormData({ ...formData, email: event.target.value })} required />
           </label>
           <label className="field">
-            <span>Passwort</span>
-            <input type="password" value={formData.password} onChange={(event) => setFormData({ ...formData, password: event.target.value })} required />
+            <span>Name / Verein</span>
+            <input type="text" value={formData.display_name} onChange={(event) => setFormData({ ...formData, display_name: event.target.value })} required />
           </label>
           <label className="field">
-            <span>Vereinsname</span>
-            <input type="text" value={formData.club_name} onChange={(event) => setFormData({ ...formData, club_name: event.target.value })} />
+            <span>Rolle</span>
+            <select value={formData.role} onChange={(event) => setFormData({ ...formData, role: event.target.value })}>
+              <option value="user">Nutzer</option>
+              {isMasterAdmin && <option value="admin">Admin</option>}
+            </select>
           </label>
           <label className="field">
             <span>Kontaktinfo</span>
@@ -221,7 +258,7 @@ export const AdminDashboard: React.FC = () => {
           <div className="form-actions">
             <button className="primary-action" type="submit">
               <UserPlus size={18} />
-              Verein anlegen
+              Einladung senden
             </button>
           </div>
         </form>
@@ -239,9 +276,17 @@ export const AdminDashboard: React.FC = () => {
             {clubs.map((club) => (
               <li key={club.id} className="club-card">
                 <span className="club-icon"><Building2 size={21} /></span>
-                <h3>{club.club_name || club.username}</h3>
-                <p>{club.username}</p>
+                <h3>{club.display_name || club.club_name || club.email}</h3>
+                <p>{club.email}</p>
+                <span className={`status-pill ${club.is_active ? 'is-live' : 'is-muted'}`}>
+                  {club.role === 'master_admin' ? 'Master-Admin' : club.role === 'admin' ? 'Admin' : 'Nutzer'} · {club.is_active ? 'aktiv' : 'eingeladen'}
+                </span>
                 <small>{club.contact_info || 'Keine Kontaktinfo hinterlegt'}</small>
+                {club.id !== user?.id && club.role !== 'master_admin' && (
+                  <button className="danger-action" type="button" onClick={() => handleDeleteUser(club.id)} aria-label={`${club.display_name || club.email} löschen`}>
+                    <Trash2 size={17} />
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -261,17 +306,53 @@ export const AdminDashboard: React.FC = () => {
               <li key={camp.id} className="management-item">
                 <div className="management-main no-thumb">
                   <div>
-                    <h3>{camp.title}</h3>
+                    {editingCampId === camp.id ? (
+                      <form className="inline-edit-form" onSubmit={(event) => handleSaveCampTitle(event, camp)}>
+                        <label className="field">
+                          <span>Titel bearbeiten</span>
+                          <input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} required />
+                        </label>
+                        <div className="inline-actions">
+                          <button className="primary-action" type="submit">
+                            Speichern
+                          </button>
+                          <button
+                            className="secondary-action"
+                            type="button"
+                            onClick={() => {
+                              setEditingCampId(null);
+                              setEditTitle('');
+                            }}
+                          >
+                            Abbrechen
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <h3>{camp.title}</h3>
+                    )}
                     <p>{camp.club_name} · {camp.type} · {camp.location_text || 'Ort offen'} · {camp.min_age}-{camp.max_age} Jahre</p>
                   </div>
                 </div>
                 <div className="item-actions">
-                  <button className="icon-button" onClick={() => handleEditCamp(camp)} aria-label={`${camp.title} bearbeiten`}>
+                  <button className="icon-button" type="button" onClick={() => handleEditCamp(camp)} aria-label={`${camp.title} bearbeiten`}>
                     <Pencil size={17} />
                   </button>
-                  <button className="danger-action" onClick={() => handleDeleteCamp(camp.id)} aria-label={`${camp.title} löschen`}>
-                    <Trash2 size={17} />
-                  </button>
+                  {deleteCampId === camp.id ? (
+                    <div className="inline-confirm" role="group" aria-label={`${camp.title} wirklich löschen`}>
+                      <span>Wirklich löschen?</span>
+                      <button className="danger-action" type="button" onClick={() => handleDeleteCamp(camp.id)}>
+                        Ja
+                      </button>
+                      <button className="secondary-action" type="button" onClick={() => setDeleteCampId(null)}>
+                        Nein
+                      </button>
+                    </div>
+                  ) : (
+                    <button className="danger-action" type="button" onClick={() => setDeleteCampId(camp.id)} aria-label={`${camp.title} löschen`}>
+                      <Trash2 size={17} />
+                    </button>
+                  )}
                 </div>
               </li>
             ))}

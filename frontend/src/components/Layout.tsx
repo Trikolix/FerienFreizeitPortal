@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Outlet, Link, NavLink, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Compass, LogIn, LogOut, Menu, Shield, UserRoundCog, X } from 'lucide-react';
@@ -10,15 +10,30 @@ export const Layout: React.FC = () => {
   const { user, logout } = useAuthStore();
   const location = useLocation();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const isAdmin = user?.role === 'admin' || user?.role === 'master_admin';
+
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, []);
 
   return (
     <div className="app-container">
+      <a className="skip-link" href="#main-content">
+        Zum Hauptinhalt springen
+      </a>
       <header className="site-header">
         <img className="header-circles" src={headerCircles} alt="" aria-hidden="true" />
         <div className="header-shell">
           <span aria-hidden="true" />
-
           <Link to="/" className="brand-logo" aria-label="Jugendring Westsachsen Ferienfreizeiten Startseite">
+            <span className="brand-heading">Ferienfreizeiten</span>
             <img src={logoJugendring} alt="Jugendring Westsachsen" />
           </Link>
 
@@ -44,15 +59,21 @@ export const Layout: React.FC = () => {
               {user && (
                 <>
                   <li>
-                    <NavLink to={user.role === 'admin' ? '/admin' : '/dashboard'} onClick={() => setIsMenuOpen(false)}>
-                      {user.role === 'admin' ? <Shield size={17} /> : <UserRoundCog size={17} />}
+                    <NavLink to={isAdmin ? '/admin' : '/dashboard'} onClick={() => setIsMenuOpen(false)}>
+                      {isAdmin ? <Shield size={17} /> : <UserRoundCog size={17} />}
                       Dashboard
+                    </NavLink>
+                  </li>
+                  <li>
+                    <NavLink to="/einstellungen" onClick={() => setIsMenuOpen(false)}>
+                      <UserRoundCog size={17} />
+                      Einstellungen
                     </NavLink>
                   </li>
                   <li>
                     <button className="icon-button text-button" onClick={() => { logout(); setIsMenuOpen(false); }} aria-label="Logout">
                       <LogOut size={17} />
-                      {user.username}
+                      {user.display_name || user.email}
                     </button>
                   </li>
                 </>

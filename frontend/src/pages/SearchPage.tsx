@@ -112,9 +112,10 @@ export const SearchPage: React.FC = () => {
       try {
         const res = await fetch(`/api/camps?${params.toString()}`);
         const data = await res.json();
-        setCamps(data);
+        setCamps(Array.isArray(data) ? data : []);
       } catch (error) {
         console.error('Error fetching camps:', error);
+        setCamps([]);
       }
     };
 

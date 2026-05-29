@@ -12,7 +12,7 @@ class AuthTest extends TestCase {
         $db->exec(file_get_contents(__DIR__ . '/../schema.sql'));
 
         $hash = password_hash('password123', PASSWORD_BCRYPT);
-        $db->exec("INSERT INTO users (username, password_hash, role) VALUES ('testadmin', '$hash', 'admin')");
+        $db->exec("INSERT INTO users (email, username, password_hash, role, display_name, is_active) VALUES ('testadmin@example.test', 'testadmin', '$hash', 'admin', 'Test Admin', 1)");
     }
 
     protected function tearDown(): void {

@@ -55,13 +55,15 @@ Für den produktiven Einsatz wird ein dedizierter Webserver (z. B. Apache, Nginx
 cd frontend
 npm run build
 ```
-Die fertigen statischen Dateien liegen dann im Verzeichnis `frontend/dist`. Diese können von einem statischen Webserver (z. B. Nginx) ausgeliefert werden.
+Die fertigen statischen Dateien liegen dann im Verzeichnis `frontend/dist`. Kopiere den Inhalt dieses Ordners in den Webroot deiner Domain. Die Datei `frontend/public/.htaccess` wird beim Build mit nach `frontend/dist/.htaccess` kopiert und leitet `/api/...` sowie `/uploads/...` passend an den Backend-Ordner weiter.
 
 ### 2. Backend aufsetzen (Apache)
-Kopiere den Inhalt des `backend/` Ordners auf deinen Webserver. Stelle sicher, dass `mod_rewrite` aktiviert ist (für die `.htaccess` Datei) und dass das Verzeichnis `backend/uploads/` durch den Webserver (z. B. `www-data`) beschreibbar ist.
+Kopiere den Inhalt des `backend/` Ordners in einen Ordner `backend/` im Webroot deiner Domain. Stelle sicher, dass `mod_rewrite` aktiviert ist (für die `.htaccess` Dateien) und dass das Verzeichnis `backend/uploads/` durch den Webserver (z. B. `www-data`) beschreibbar ist.
 
 ### 3. Datenbank konfigurieren
-Das PHP-Skript erstellt die Tabellen automatisch beim ersten Request, wenn diese fehlen. Du kannst die Verbindungsdaten über Umgebungsvariablen setzen (z.B. im Apache vHost oder einer `.env` via Server-Config):
+Das PHP-Skript erstellt die Tabellen automatisch beim ersten Request, wenn diese fehlen. Für Deployment ohne eingecheckte Zugangsdaten kannst du `backend/config.example.php` nach `backend/config.local.php` kopieren und dort die echten Verbindungsdaten eintragen. `backend/config.local.php` wird von Git ignoriert.
+
+Alternativ kannst du die Verbindungsdaten über Umgebungsvariablen setzen (z.B. im Apache vHost oder einer `.env` via Server-Config). Umgebungsvariablen haben Vorrang vor `backend/config.local.php`:
 
 * `DB_CONNECTION`: `mysql`, `pgsql` oder leer lassen für `sqlite`
 * `DB_HOST`: Hostname (z. B. `localhost` oder eine IP)

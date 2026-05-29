@@ -89,7 +89,7 @@ export const CampDetailPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="empty-state">
+      <div className="empty-state" role="status">
         <p>Freizeit wird geladen...</p>
       </div>
     );
@@ -119,7 +119,7 @@ export const CampDetailPage: React.FC = () => {
 
       <section className="detail-hero">
         {camp.images?.length ? (
-          <img src={camp.images[0]} alt="" />
+          <img src={camp.images[0]} alt={`Bild zu ${camp.title}`} />
         ) : (
           <div className="camp-media-fallback">
             <MapPin size={42} />

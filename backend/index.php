@@ -8,12 +8,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
+$localConfigPath = __DIR__ . '/config.local.php';
+$localConfig = is_file($localConfigPath) ? require $localConfigPath : [];
+if (!is_array($localConfig)) {
+    $localConfig = [];
+}
+
+function configValue($config, $key, $default) {
+    $envValue = getenv($key);
+    if ($envValue !== false && $envValue !== '') {
+        return $envValue;
+    }
+
+    return $config[$key] ?? $default;
+}
+
 // Database Connection
-$dbConnection = getenv('DB_CONNECTION') ?: 'sqlite';
-$dbHost = getenv('DB_HOST') ?: '127.0.0.1';
-$dbName = getenv('DB_NAME') ?: 'westsachsen_camps';
-$dbUser = getenv('DB_USER') ?: 'root';
-$dbPass = getenv('DB_PASSWORD') ?: '';
+$dbConnection = configValue($localConfig, 'DB_CONNECTION', 'sqlite');
+$dbHost = configValue($localConfig, 'DB_HOST', '127.0.0.1');
+$dbName = configValue($localConfig, 'DB_NAME', 'westsachsen_camps');
+$dbUser = configValue($localConfig, 'DB_USER', 'root');
+$dbPass = configValue($localConfig, 'DB_PASSWORD', '');
 
 try {
     if ($dbConnection === 'pgsql') {
@@ -45,9 +60,9 @@ try {
             }
             $db->exec($schema);
 
-            // Insert default admin if users table is freshly created
+            // Insert default master admin if users table is freshly created
             $hash = password_hash('admin', PASSWORD_BCRYPT);
-            $db->exec("INSERT INTO users (username, password_hash, role) VALUES ('admin', '$hash', 'admin')");
+            $db->exec("INSERT INTO users (email, username, password_hash, role, display_name, is_active) VALUES ('admin@example.test', 'admin', '$hash', 'master_admin', 'Master-Admin', 1)");
         }
     }
 } catch (PDOException $e) {
@@ -57,22 +72,116 @@ try {
     exit();
 }
 
-function ensureDefaultUser($db, $username, $password, $role, $clubName = null, $contactInfo = null) {
-    $stmt = $db->prepare('SELECT id FROM users WHERE username = ?');
-    $stmt->execute([$username]);
+function normalizeRole($role) {
+    return $role === 'club' ? 'user' : $role;
+}
 
-    if ($stmt->fetch(PDO::FETCH_ASSOC)) {
+function isAdminRole($user) {
+    return in_array(normalizeRole($user['role'] ?? ''), ['master_admin', 'admin'], true);
+}
+
+function isMasterAdmin($user) {
+    return normalizeRole($user['role'] ?? '') === 'master_admin';
+}
+
+function ensureUserSchema($db, $dbConnection) {
+    if ($dbConnection === 'sqlite') {
+        $tableSql = $db->query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")->fetchColumn();
+        if ($tableSql && strpos($tableSql, "'club'") !== false) {
+            $db->exec('PRAGMA foreign_keys=off');
+            $db->exec('ALTER TABLE users RENAME TO users_old');
+            $schema = "
+                CREATE TABLE users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email VARCHAR(255) UNIQUE NOT NULL,
+                    username VARCHAR(255) UNIQUE NOT NULL,
+                    password_hash TEXT,
+                    role TEXT NOT NULL CHECK(role IN ('master_admin', 'admin', 'user')),
+                    display_name TEXT NOT NULL,
+                    club_name TEXT,
+                    contact_info TEXT,
+                    is_active BOOLEAN DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ";
+            $db->exec($schema);
+            $db->exec("
+                INSERT INTO users (id, email, username, password_hash, role, display_name, club_name, contact_info, is_active)
+                SELECT id, username || '@example.test', username, password_hash,
+                    CASE WHEN role = 'club' THEN 'user' ELSE role END,
+                    COALESCE(club_name, username), club_name, contact_info, 1
+                FROM users_old
+            ");
+            $db->exec('DROP TABLE users_old');
+            $db->exec('PRAGMA foreign_keys=on');
+        }
+    }
+
+    $columns = [
+        'email' => 'VARCHAR(255)',
+        'display_name' => 'TEXT',
+        'is_active' => 'BOOLEAN DEFAULT 0',
+        'created_at' => $dbConnection === 'pgsql' ? 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' : 'DATETIME DEFAULT CURRENT_TIMESTAMP',
+        'updated_at' => $dbConnection === 'pgsql' ? 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' : 'DATETIME DEFAULT CURRENT_TIMESTAMP',
+    ];
+
+    foreach ($columns as $name => $type) {
+        try {
+            $db->exec("ALTER TABLE users ADD COLUMN $name $type");
+        } catch (PDOException $e) {
+        }
+    }
+
+    try {
+        $db->exec("UPDATE users SET role = 'user' WHERE role = 'club'");
+        $db->exec("UPDATE users SET email = username || '@example.test' WHERE email IS NULL OR email = ''");
+        $db->exec("UPDATE users SET display_name = COALESCE(club_name, username) WHERE display_name IS NULL OR display_name = ''");
+        $db->exec("UPDATE users SET is_active = 1 WHERE password_hash IS NOT NULL AND (is_active IS NULL OR is_active = 0)");
+    } catch (PDOException $e) {
+        error_log("User Schema Backfill Error: " . $e->getMessage());
+    }
+
+    try {
+        $idType = $dbConnection === 'pgsql' ? 'SERIAL PRIMARY KEY' : ($dbConnection === 'mysql' ? 'INT AUTO_INCREMENT PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT');
+        $dateType = $dbConnection === 'pgsql' ? 'TIMESTAMP' : 'DATETIME';
+        $db->exec("CREATE TABLE IF NOT EXISTS password_tokens (
+            id $idType,
+            user_id INTEGER NOT NULL,
+            token_hash VARCHAR(255) UNIQUE NOT NULL,
+            purpose TEXT NOT NULL CHECK(purpose IN ('invite', 'reset')),
+            expires_at $dateType NOT NULL,
+            used_at $dateType,
+            created_at $dateType DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )");
+    } catch (PDOException $e) {
+        error_log("Password Token Schema Error: " . $e->getMessage());
+    }
+}
+
+ensureUserSchema($db, $dbConnection);
+
+function ensureDefaultUser($db, $email, $username, $password, $role, $displayName, $contactInfo = null) {
+    $stmt = $db->prepare('SELECT * FROM users WHERE email = ? OR username = ?');
+    $stmt->execute([$email, $username]);
+
+    $existingUser = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($existingUser) {
+        $hash = password_hash($password, PASSWORD_BCRYPT);
+        $stmt = $db->prepare('UPDATE users SET email = ?, username = ?, password_hash = ?, role = ?, display_name = ?, club_name = ?, contact_info = ?, is_active = 1, updated_at = ? WHERE id = ?');
+        $stmt->execute([$email, $username, $hash, $role, $displayName, $displayName, $contactInfo, date('Y-m-d H:i:s'), $existingUser['id']]);
         return;
     }
 
     $hash = password_hash($password, PASSWORD_BCRYPT);
-    $stmt = $db->prepare('INSERT INTO users (username, password_hash, role, club_name, contact_info) VALUES (?, ?, ?, ?, ?)');
-    $stmt->execute([$username, $hash, $role, $clubName, $contactInfo]);
+    $stmt = $db->prepare('INSERT INTO users (email, username, password_hash, role, display_name, club_name, contact_info, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, 1)');
+    $stmt->execute([$email, $username, $hash, $role, $displayName, $displayName, $contactInfo]);
 }
 
 try {
-    ensureDefaultUser($db, 'admin', 'admin', 'admin');
-    ensureDefaultUser($db, 'testverein', 'testverein', 'club', 'Testverein Westsachsen', 'testverein@example.test');
+    ensureDefaultUser($db, 'admin@example.test', 'admin', 'admin', 'master_admin', 'Master-Admin');
+    ensureDefaultUser($db, 'testverein@example.test', 'testverein', 'testverein', 'user', 'Testverein Westsachsen', 'testverein@example.test');
 } catch (PDOException $e) {
     error_log("Default User Seed Error: " . $e->getMessage());
 }
@@ -119,6 +228,78 @@ function jsonResponse($data, $statusCode = 200) {
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
     exit();
+}
+
+function appBaseUrl() {
+    return rtrim(getenv('APP_BASE_URL') ?: 'http://localhost:5173', '/');
+}
+
+function apiBaseUrl() {
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost:8000';
+    return $scheme . '://' . $host;
+}
+
+function sendHtmlMail($to, $subject, $html) {
+    $from = getenv('MAIL_FROM') ?: 'noreply@ferienfreizeitportal.local';
+    $headers = [
+        'MIME-Version: 1.0',
+        'Content-Type: text/html; charset=UTF-8',
+        'Content-Transfer-Encoding: 8bit',
+        'From: ' . $from,
+    ];
+
+    $sent = false;
+    if (function_exists('mail')) {
+        $sent = @mail($to, '=?UTF-8?B?' . base64_encode($subject) . '?=', $html, implode("\r\n", $headers));
+    }
+
+    if (!$sent) {
+        $log = date('[Y-m-d H:i:s] ') . "Mail fallback to $to: $subject\n$html\n\n";
+        file_put_contents(__DIR__ . '/mail.log', $log, FILE_APPEND);
+    }
+
+    return $sent;
+}
+
+function createPasswordToken($db, $userId, $purpose) {
+    $token = bin2hex(random_bytes(32));
+    $tokenHash = hash('sha256', $token);
+    $expiresAt = date('Y-m-d H:i:s', strtotime($purpose === 'invite' ? '+7 days' : '+2 hours'));
+
+    $stmt = $db->prepare('UPDATE password_tokens SET used_at = ? WHERE user_id = ? AND purpose = ? AND used_at IS NULL');
+    $stmt->execute([date('Y-m-d H:i:s'), $userId, $purpose]);
+
+    $stmt = $db->prepare('INSERT INTO password_tokens (user_id, token_hash, purpose, expires_at) VALUES (?, ?, ?, ?)');
+    $stmt->execute([$userId, $tokenHash, $purpose, $expiresAt]);
+
+    return $token;
+}
+
+function passwordMailHtml($headline, $name, $link, $body) {
+    $safeHeadline = htmlspecialchars($headline, ENT_QUOTES, 'UTF-8');
+    $safeName = htmlspecialchars($name, ENT_QUOTES, 'UTF-8');
+    $safeLink = htmlspecialchars($link, ENT_QUOTES, 'UTF-8');
+    $safeBody = htmlspecialchars($body, ENT_QUOTES, 'UTF-8');
+
+    return "<!doctype html><html lang=\"de\"><head><meta charset=\"UTF-8\"><title>$safeHeadline</title></head>"
+        . "<body style=\"font-family:Arial,sans-serif;line-height:1.5;color:#2e2e2e\">"
+        . "<h1>$safeHeadline</h1><p>Hallo $safeName,</p><p>$safeBody</p>"
+        . "<p><a href=\"$safeLink\" style=\"display:inline-block;padding:12px 16px;background:#97c558;color:#1f2a16;text-decoration:none;font-weight:bold\">Passwort festlegen</a></p>"
+        . "<p>Falls der Button nicht funktioniert, öffne diesen Link:<br><a href=\"$safeLink\">$safeLink</a></p>"
+        . "</body></html>";
+}
+
+function userPayload($user) {
+    return [
+        'id' => (int)$user['id'],
+        'email' => $user['email'] ?? $user['username'],
+        'username' => $user['username'],
+        'role' => normalizeRole($user['role']),
+        'display_name' => $user['display_name'] ?? ($user['club_name'] ?? $user['username']),
+        'club_name' => $user['club_name'] ?? '',
+        'contact_info' => $user['contact_info'] ?? '',
+    ];
 }
 
 // Router
@@ -194,7 +375,7 @@ function getCampForUser($db, $campId, $user) {
     $checkStmt->execute([$campId]);
     $camp = $checkStmt->fetch(PDO::FETCH_ASSOC);
 
-    if (!$camp || ($camp['club_id'] !== $user['id'] && $user['role'] !== 'admin')) {
+    if (!$camp || ((int)$camp['club_id'] !== (int)$user['id'] && !isAdminRole($user))) {
         return null;
     }
 
@@ -262,25 +443,78 @@ function validateCampDates($data) {
 try {
     if ($requestUri === '/api/login' && $requestMethod === 'POST') {
         $data = json_decode(file_get_contents('php://input'), true);
-        $username = $data['username'] ?? '';
+        $username = trim($data['username'] ?? '');
         $password = $data['password'] ?? '';
 
-        $stmt = $db->prepare('SELECT * FROM users WHERE username = ?');
-        $stmt->execute([$username]);
+        $stmt = $db->prepare('SELECT * FROM users WHERE username = ? OR email = ?');
+        $stmt->execute([$username, $username]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if ($user && password_verify($password, $user['password_hash'])) {
+        if ($user && (int)($user['is_active'] ?? 1) === 1 && !empty($user['password_hash']) && password_verify($password, $user['password_hash'])) {
             $token = bin2hex(random_bytes(32));
             $expiresAt = date('Y-m-d H:i:s', strtotime('+24 hours'));
 
             $stmt = $db->prepare('INSERT INTO sessions (user_id, token, expires_at) VALUES (?, ?, ?)');
             $stmt->execute([$user['id'], $token, $expiresAt]);
 
-            jsonResponse(['token' => $token, 'user' => ['id' => $user['id'], 'username' => $user['username'], 'role' => $user['role']]]);
+            jsonResponse(['token' => $token, 'user' => userPayload($user)]);
         } else {
             logError("Failed login attempt for username: $username");
             jsonResponse(['error' => 'Invalid credentials'], 401);
         }
+    }
+    elseif ($requestUri === '/api/password/request-reset' && $requestMethod === 'POST') {
+        $data = json_decode(file_get_contents('php://input'), true) ?? [];
+        $email = trim($data['email'] ?? '');
+
+        if ($email !== '') {
+            $stmt = $db->prepare('SELECT * FROM users WHERE email = ?');
+            $stmt->execute([$email]);
+            $targetUser = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($targetUser) {
+                $token = createPasswordToken($db, $targetUser['id'], 'reset');
+                $link = appBaseUrl() . '/passwort-setzen?token=' . urlencode($token) . '&purpose=reset';
+                $html = passwordMailHtml(
+                    'Passwort zurücksetzen',
+                    $targetUser['display_name'] ?? $targetUser['username'],
+                    $link,
+                    'über diesen Link kannst du ein neues Passwort für dein Konto festlegen. Der Link ist zwei Stunden gültig.'
+                );
+                sendHtmlMail($targetUser['email'], 'Passwort zurücksetzen', $html);
+            }
+        }
+
+        jsonResponse(['message' => 'Wenn ein Konto zu dieser E-Mail existiert, wurde eine Nachricht versendet.']);
+    }
+    elseif ($requestUri === '/api/password/set' && $requestMethod === 'POST') {
+        $data = json_decode(file_get_contents('php://input'), true) ?? [];
+        $token = $data['token'] ?? '';
+        $password = $data['password'] ?? '';
+        $purpose = $data['purpose'] ?? '';
+
+        if (!in_array($purpose, ['invite', 'reset'], true) || strlen($password) < 8) {
+            jsonResponse(['error' => 'Ungültige Anfrage oder Passwort zu kurz'], 400);
+        }
+
+        $tokenHash = hash('sha256', $token);
+        $now = date('Y-m-d H:i:s');
+        $stmt = $db->prepare('SELECT pt.*, u.id AS user_id FROM password_tokens pt JOIN users u ON u.id = pt.user_id WHERE pt.token_hash = ? AND pt.purpose = ? AND pt.used_at IS NULL AND pt.expires_at > ?');
+        $stmt->execute([$tokenHash, $purpose, $now]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$row) {
+            jsonResponse(['error' => 'Der Link ist ungültig oder abgelaufen'], 400);
+        }
+
+        $passwordHash = password_hash($password, PASSWORD_BCRYPT);
+        $stmt = $db->prepare('UPDATE users SET password_hash = ?, is_active = 1, updated_at = ? WHERE id = ?');
+        $stmt->execute([$passwordHash, $now, $row['user_id']]);
+
+        $stmt = $db->prepare('UPDATE password_tokens SET used_at = ? WHERE id = ?');
+        $stmt->execute([$now, $row['id']]);
+
+        jsonResponse(['message' => 'Passwort wurde gespeichert']);
     }
     elseif ($requestUri === '/api/logout' && $requestMethod === 'POST') {
         $authHeader = getAuthorizationHeader();
@@ -412,46 +646,140 @@ try {
 
         jsonResponse(['message' => 'Image deleted successfully']);
     }
+    elseif ($requestUri === '/api/me' && $requestMethod === 'GET') {
+        $user = authenticateUser($db);
+        if (!$user) {
+            jsonResponse(['error' => 'Unauthorized'], 401);
+        }
+
+        jsonResponse(userPayload($user));
+    }
+    elseif ($requestUri === '/api/me' && $requestMethod === 'PUT') {
+        $user = authenticateUser($db);
+        if (!$user) {
+            jsonResponse(['error' => 'Unauthorized'], 401);
+        }
+
+        $data = json_decode(file_get_contents('php://input'), true) ?? [];
+        $displayName = trim($data['display_name'] ?? '');
+        $contactInfo = trim($data['contact_info'] ?? '');
+
+        if ($displayName === '') {
+            jsonResponse(['error' => 'Name ist erforderlich'], 400);
+        }
+
+        $stmt = $db->prepare('UPDATE users SET display_name = ?, club_name = ?, contact_info = ?, updated_at = ? WHERE id = ?');
+        $stmt->execute([$displayName, $displayName, $contactInfo, date('Y-m-d H:i:s'), $user['id']]);
+
+        $stmt = $db->prepare('SELECT * FROM users WHERE id = ?');
+        $stmt->execute([$user['id']]);
+        jsonResponse(userPayload($stmt->fetch(PDO::FETCH_ASSOC)));
+    }
     elseif ($requestUri === '/api/admin/users' && $requestMethod === 'POST') {
         $user = authenticateUser($db);
-        if (!$user || $user['role'] !== 'admin') {
+        if (!$user || !isAdminRole($user)) {
             jsonResponse(['error' => 'Forbidden'], 403);
         }
 
-        $data = json_decode(file_get_contents('php://input'), true);
-        $username = $data['username'] ?? '';
-        $password = $data['password'] ?? '';
-        $clubName = $data['club_name'] ?? '';
-        $contactInfo = $data['contact_info'] ?? '';
+        $data = json_decode(file_get_contents('php://input'), true) ?? [];
+        $email = strtolower(trim($data['email'] ?? ''));
+        $displayName = trim($data['display_name'] ?? ($data['club_name'] ?? ''));
+        $role = normalizeRole($data['role'] ?? 'user');
+        $contactInfo = trim($data['contact_info'] ?? '');
 
-        if (!$username || !$password) {
-            jsonResponse(['error' => 'Username and password are required'], 400);
+        if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL) || !$displayName) {
+            jsonResponse(['error' => 'E-Mail und Name sind erforderlich'], 400);
         }
 
-        $hashedPassword = password_hash($password, PASSWORD_BCRYPT);
+        if (!in_array($role, ['admin', 'user'], true) || ($role === 'admin' && !isMasterAdmin($user))) {
+            jsonResponse(['error' => 'Diese Rolle darf nicht vergeben werden'], 403);
+        }
+
+        $username = $email;
 
         try {
-            $stmt = $db->prepare('INSERT INTO users (username, password_hash, role, club_name, contact_info) VALUES (?, ?, ?, ?, ?)');
-            $stmt->execute([$username, $hashedPassword, 'club', $clubName, $contactInfo]);
-            jsonResponse(['message' => 'Club user created successfully', 'id' => $db->lastInsertId()]);
+            $stmt = $db->prepare('INSERT INTO users (email, username, password_hash, role, display_name, club_name, contact_info, is_active) VALUES (?, ?, NULL, ?, ?, ?, ?, 0)');
+            $stmt->execute([$email, $username, $role, $displayName, $displayName, $contactInfo]);
+            $newUserId = $db->lastInsertId();
+            $token = createPasswordToken($db, $newUserId, 'invite');
+            $link = appBaseUrl() . '/passwort-setzen?token=' . urlencode($token) . '&purpose=invite';
+            $html = passwordMailHtml(
+                'Einladung zum Ferienfreizeitportal',
+                $displayName,
+                $link,
+                'du wurdest für das Ferienfreizeitportal eingeladen. Über diesen Link legst du dein Passwort fest und aktivierst dein Konto. Der Link ist sieben Tage gültig.'
+            );
+            sendHtmlMail($email, 'Einladung zum Ferienfreizeitportal', $html);
+
+            jsonResponse(['message' => 'Nutzer wurde eingeladen', 'id' => $newUserId]);
         } catch (PDOException $e) {
             if ($e->getCode() == 23000) { // Integrity constraint violation (UNIQUE constraint)
-                jsonResponse(['error' => 'Username already exists'], 400);
+                jsonResponse(['error' => 'E-Mail ist bereits vergeben'], 400);
             }
             throw $e;
         }
     }
     elseif ($requestUri === '/api/admin/users' && $requestMethod === 'GET') {
         $user = authenticateUser($db);
-        if (!$user || $user['role'] !== 'admin') {
+        if (!$user || !isAdminRole($user)) {
             jsonResponse(['error' => 'Forbidden'], 403);
         }
 
-        $stmt = $db->prepare('SELECT id, username, role, club_name, contact_info FROM users WHERE role = "club"');
-        $stmt->execute();
+        $query = 'SELECT id, email, username, role, display_name, club_name, contact_info, is_active FROM users';
+        $params = [];
+        if (!isMasterAdmin($user)) {
+            $query .= " WHERE role = 'user'";
+        }
+        $query .= ' ORDER BY display_name ASC';
+        $stmt = $db->prepare($query);
+        $stmt->execute($params);
         $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+        foreach ($users as &$listedUser) {
+            $listedUser['role'] = normalizeRole($listedUser['role']);
+        }
+
         jsonResponse($users);
+    }
+    elseif (preg_match('/^\/api\/admin\/users\/(\d+)$/', $requestUri, $matches) && in_array($requestMethod, ['PUT', 'DELETE'])) {
+        $user = authenticateUser($db);
+        if (!$user || !isAdminRole($user)) {
+            jsonResponse(['error' => 'Forbidden'], 403);
+        }
+
+        $targetId = (int)$matches[1];
+        if ($targetId === (int)$user['id']) {
+            jsonResponse(['error' => 'Das eigene Konto kann hier nicht geändert werden'], 400);
+        }
+
+        $stmt = $db->prepare('SELECT * FROM users WHERE id = ?');
+        $stmt->execute([$targetId]);
+        $targetUser = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$targetUser) {
+            jsonResponse(['error' => 'Nutzer nicht gefunden'], 404);
+        }
+        if (!isMasterAdmin($user) && normalizeRole($targetUser['role']) !== 'user') {
+            jsonResponse(['error' => 'Admins dürfen nur Nutzer verwalten'], 403);
+        }
+
+        if ($requestMethod === 'DELETE') {
+            $stmt = $db->prepare('DELETE FROM users WHERE id = ?');
+            $stmt->execute([$targetId]);
+            jsonResponse(['message' => 'Nutzer gelöscht']);
+        }
+
+        $data = json_decode(file_get_contents('php://input'), true) ?? [];
+        $displayName = trim($data['display_name'] ?? '');
+        $contactInfo = trim($data['contact_info'] ?? '');
+        $role = normalizeRole($data['role'] ?? $targetUser['role']);
+
+        if ($displayName === '' || !in_array($role, ['admin', 'user'], true) || ($role === 'admin' && !isMasterAdmin($user))) {
+            jsonResponse(['error' => 'Ungültige Nutzerdaten'], 400);
+        }
+
+        $stmt = $db->prepare('UPDATE users SET role = ?, display_name = ?, club_name = ?, contact_info = ?, updated_at = ? WHERE id = ?');
+        $stmt->execute([$role, $displayName, $displayName, $contactInfo, date('Y-m-d H:i:s'), $targetId]);
+        jsonResponse(['message' => 'Nutzer aktualisiert']);
     }
     elseif (preg_match('/^\/api\/camps\/(\d+)$/', $requestUri, $matches) && $requestMethod === 'GET') {
         $campId = $matches[1];
@@ -474,12 +802,19 @@ try {
         $query = 'SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id';
         $params = [];
         $whereAdded = false;
+        $currentUser = authenticateUser($db);
 
         if (isset($_GET['club_id'])) {
             $query .= ' WHERE c.club_id = ?';
             $params[] = $_GET['club_id'];
             $whereAdded = true;
+            if (!$currentUser || (!isAdminRole($currentUser) && (int)$currentUser['id'] !== (int)$_GET['club_id'])) {
+                $query .= ' AND c.is_active = 1';
+            }
         } elseif (isset($_GET['all']) && $_GET['all'] == 1) {
+            if (!$currentUser || !isAdminRole($currentUser)) {
+                jsonResponse(['error' => 'Forbidden'], 403);
+            }
             $query .= ' WHERE 1=1'; // Admin wants all
             $whereAdded = true;
         } else {

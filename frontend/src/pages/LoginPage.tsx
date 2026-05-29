@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { KeyRound, LogIn, UserRound } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 
 export const LoginPage: React.FC = () => {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const login = useAuthStore((state) => state.login);
@@ -18,7 +18,7 @@ export const LoginPage: React.FC = () => {
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username: email, password }),
       });
 
       const data = await res.json();
@@ -27,7 +27,7 @@ export const LoginPage: React.FC = () => {
         setError(data.error || 'Login fehlgeschlagen');
       } else {
         login(data.user, data.token);
-        navigate(data.user.role === 'admin' ? '/admin' : '/dashboard');
+        navigate(data.user.role === 'user' ? '/dashboard' : '/admin');
       }
     } catch {
       setError('Netzwerkfehler');
@@ -56,13 +56,13 @@ export const LoginPage: React.FC = () => {
           )}
 
           <label className="field">
-            <span>Benutzername</span>
+            <span>E-Mail oder Nutzername</span>
             <div className="input-with-icon">
               <UserRound size={18} />
               <input
                 type="text"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
                 required
                 autoComplete="username"
               />
@@ -87,6 +87,9 @@ export const LoginPage: React.FC = () => {
             <LogIn size={18} />
             Anmelden
           </button>
+          <Link className="secondary-action auth-link" to="/passwort-vergessen">
+            Passwort vergessen
+          </Link>
         </form>
       </section>
     </div>

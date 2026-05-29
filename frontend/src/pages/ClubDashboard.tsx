@@ -40,7 +40,9 @@ export const ClubDashboard: React.FC = () => {
 
   const fetchCamps = async () => {
     try {
-      const res = await fetch(`/api/camps?club_id=${user?.id}`);
+      const res = await fetch(`/api/camps?club_id=${user?.id}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
       const data = await res.json();
       setCamps(Array.isArray(data) ? data : []);
     } catch (error) {
@@ -49,7 +51,7 @@ export const ClubDashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!user || user.role !== 'club') {
+    if (!user || user.role !== 'user') {
       navigate('/login');
       return;
     }
@@ -57,7 +59,9 @@ export const ClubDashboard: React.FC = () => {
     let cancelled = false;
     const loadCamps = async () => {
       try {
-        const res = await fetch(`/api/camps?club_id=${user.id}`);
+        const res = await fetch(`/api/camps?club_id=${user.id}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
         const data = await res.json();
         if (!cancelled) {
           setCamps(Array.isArray(data) ? data : []);
@@ -72,12 +76,20 @@ export const ClubDashboard: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [user, navigate]);
+  }, [user, token, navigate]);
 
   const validateDates = () => {
     const startsAt = parseFormDate(formData.starts_at);
     const endsAt = parseFormDate(formData.ends_at);
     const registrationDeadline = parseFormDate(formData.registration_deadline);
+
+    if (
+      formData.min_age !== undefined &&
+      formData.max_age !== undefined &&
+      Number(formData.max_age) < Number(formData.min_age)
+    ) {
+      return 'Das Höchstalter muss größer oder gleich dem Mindestalter sein.';
+    }
 
     if (startsAt && endsAt && endsAt <= startsAt) {
       return 'Das Ende der Freizeit muss nach dem Beginn liegen.';
@@ -228,9 +240,13 @@ export const ClubDashboard: React.FC = () => {
           <h2>{isEditing ? 'Freizeit bearbeiten' : 'Neue Freizeit anlegen'}</h2>
           <span>{isEditing ? 'Änderungen werden direkt gespeichert' : 'Alle Pflichtfelder sauber ausfüllen'}</span>
         </div>
-        {formError && <p className="alert">{formError}</p>}
+        {formError && (
+          <p className="alert" id="camp-form-error" role="alert">
+            {formError}
+          </p>
+        )}
 
-        <form className="dashboard-form" onSubmit={handleSubmit}>
+        <form className="dashboard-form" onSubmit={handleSubmit} aria-describedby={formError ? 'camp-form-error' : undefined}>
           <label className="field">
             <span>Titel</span>
             <input type="text" value={formData.title || ''} onChange={(event) => setFormData({ ...formData, title: event.target.value })} required />
@@ -241,11 +257,11 @@ export const ClubDashboard: React.FC = () => {
           </label>
           <label className="field">
             <span>Mindestalter</span>
-            <input type="number" min="0" value={formData.min_age || ''} onChange={(event) => setFormData({ ...formData, min_age: Number(event.target.value) })} />
+            <input type="number" min="0" value={formData.min_age ?? ''} onChange={(event) => setFormData({ ...formData, min_age: event.target.value === '' ? undefined : Number(event.target.value) })} required />
           </label>
           <label className="field">
             <span>Höchstalter</span>
-            <input type="number" min="0" value={formData.max_age || ''} onChange={(event) => setFormData({ ...formData, max_age: Number(event.target.value) })} />
+            <input type="number" min="0" value={formData.max_age ?? ''} onChange={(event) => setFormData({ ...formData, max_age: event.target.value === '' ? undefined : Number(event.target.value) })} required />
           </label>
           <label className="field field-wide">
             <span>Beschreibung</span>
@@ -253,44 +269,44 @@ export const ClubDashboard: React.FC = () => {
           </label>
           <label className="field field-wide">
             <span>Ort</span>
-            <input type="text" value={formData.location_text || ''} onChange={(event) => setFormData({ ...formData, location_text: event.target.value })} />
+            <input type="text" value={formData.location_text || ''} onChange={(event) => setFormData({ ...formData, location_text: event.target.value })} required />
           </label>
           <label className="field">
             <span>Beginn</span>
-            <input type="datetime-local" value={normalizeDateTimeLocal(formData.starts_at)} onChange={(event) => setFormData({ ...formData, starts_at: event.target.value })} />
+            <input type="datetime-local" value={normalizeDateTimeLocal(formData.starts_at)} onChange={(event) => setFormData({ ...formData, starts_at: event.target.value })} required />
           </label>
           <label className="field">
             <span>Ende</span>
-            <input type="datetime-local" value={normalizeDateTimeLocal(formData.ends_at)} onChange={(event) => setFormData({ ...formData, ends_at: event.target.value })} />
+            <input type="datetime-local" value={normalizeDateTimeLocal(formData.ends_at)} onChange={(event) => setFormData({ ...formData, ends_at: event.target.value })} required />
           </label>
           <label className="field">
             <span>Teilnahmebeitrag in €</span>
-            <input type="number" min="0" step="0.01" value={formData.price_eur || ''} onChange={(event) => setFormData({ ...formData, price_eur: Number(event.target.value) })} />
+            <input type="number" min="0" step="0.01" value={formData.price_eur ?? ''} onChange={(event) => setFormData({ ...formData, price_eur: event.target.value === '' ? undefined : Number(event.target.value) })} required />
           </label>
           <label className="field">
             <span>Anmeldeschluss</span>
-            <input type="datetime-local" value={normalizeDateTimeLocal(formData.registration_deadline)} onChange={(event) => setFormData({ ...formData, registration_deadline: event.target.value })} />
+            <input type="datetime-local" value={normalizeDateTimeLocal(formData.registration_deadline)} onChange={(event) => setFormData({ ...formData, registration_deadline: event.target.value })} required />
           </label>
           <label className="field">
             <span>Latitude für Karte</span>
-            <input type="number" step="any" value={formData.location_lat || ''} onChange={(event) => setFormData({ ...formData, location_lat: Number(event.target.value) })} />
+            <input type="number" step="any" value={formData.location_lat ?? ''} onChange={(event) => setFormData({ ...formData, location_lat: event.target.value === '' ? undefined : Number(event.target.value) })} />
           </label>
           <label className="field">
             <span>Longitude für Karte</span>
-            <input type="number" step="any" value={formData.location_lng || ''} onChange={(event) => setFormData({ ...formData, location_lng: Number(event.target.value) })} />
+            <input type="number" step="any" value={formData.location_lng ?? ''} onChange={(event) => setFormData({ ...formData, location_lng: event.target.value === '' ? undefined : Number(event.target.value) })} />
           </label>
           {isEditing && Boolean(formData.images?.length) && (
             <div className="field field-wide">
               <span>Vorhandene Bilder</span>
               <ul className="image-management-list">
-                {formData.images?.map((image) => (
+                {formData.images?.map((image, index) => (
                   <li key={image}>
-                    <img src={image} alt="" />
+                    <img src={image} alt={`Bild ${index + 1} zu ${formData.title || 'dieser Freizeit'}`} />
                     <button
                       className="danger-action"
                       type="button"
                       onClick={() => formData.id && handleDeleteImage(formData.id, image)}
-                      aria-label="Bild löschen"
+                      aria-label={`Bild ${index + 1} löschen`}
                     >
                       <Trash2 size={17} />
                     </button>
@@ -332,7 +348,7 @@ export const ClubDashboard: React.FC = () => {
             {camps.map((camp) => (
               <li key={camp.id} className="management-item">
                 <div className="management-main">
-                  {camp.images?.length ? <img src={camp.images[0]} alt="" /> : <span className="thumb-placeholder"><ImagePlus size={22} /></span>}
+                  {camp.images?.length ? <img src={camp.images[0]} alt={`Bild zu ${camp.title}`} /> : <span className="thumb-placeholder"><ImagePlus size={22} /></span>}
                   <div>
                     <h3>{camp.title}</h3>
                     <p>{camp.type} · {camp.location_text || 'Ort offen'} · {camp.min_age}-{camp.max_age} Jahre</p>
