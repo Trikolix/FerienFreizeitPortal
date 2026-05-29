@@ -7,15 +7,17 @@ interface Camp {
   id: number;
   title: string;
   club_name: string;
-  age_from: number;
-  age_to: number;
+  min_age: number;
+  max_age: number;
   description: string;
   type: string;
+  location_text: string;
   location_lat: number;
   location_lng: number;
-  period: string;
-  cost: string;
-  accessibility: string;
+  starts_at: string;
+  ends_at: string;
+  price_eur: number;
+  registration_deadline: string;
   is_active: number;
 }
 
@@ -26,6 +28,31 @@ interface ClubUser {
   contact_info: string;
 }
 
+const parseJson = async (response: Response) => {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+};
+
+const fetchJsonArray = async <T,>(url: string, token: string): Promise<T[]> => {
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await parseJson(response);
+
+  if (!response.ok) {
+    throw new Error(data?.error || `Request failed with status ${response.status}`);
+  }
+
+  if (!Array.isArray(data)) {
+    throw new Error('Unerwartete Antwort vom Server');
+  }
+
+  return data;
+};
+
 export const AdminDashboard: React.FC = () => {
   const { user, token } = useAuthStore();
   const navigate = useNavigate();
@@ -35,37 +62,66 @@ export const AdminDashboard: React.FC = () => {
   const [error, setError] = useState('');
 
   const fetchCamps = async () => {
+    if (!token) return;
+
     try {
-      const res = await fetch('/api/camps?all=1', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      setCamps(data);
+      setCamps(await fetchJsonArray<Camp>('/api/camps?all=1', token));
     } catch (err) {
       console.error(err);
+      setError(err instanceof Error ? err.message : 'Freizeiten konnten nicht geladen werden');
     }
   };
 
   const fetchClubs = async () => {
+    if (!token) return;
+
     try {
-      const res = await fetch('/api/admin/users', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      setClubs(data);
+      setClubs(await fetchJsonArray<ClubUser>('/api/admin/users', token));
     } catch (err) {
       console.error(err);
+      setError(err instanceof Error ? err.message : 'Vereine konnten nicht geladen werden');
     }
   };
 
   useEffect(() => {
     if (!user || user.role !== 'admin') {
       navigate('/login');
-    } else {
-      fetchClubs();
-      fetchCamps();
+      return;
     }
-  }, [user, navigate]);
+
+    if (!token) {
+      navigate('/login');
+      return;
+    }
+
+    let cancelled = false;
+    const loadDashboard = async () => {
+      try {
+        const [clubsData, campsData] = await Promise.all([
+          fetchJsonArray<ClubUser>('/api/admin/users', token),
+          fetchJsonArray<Camp>('/api/camps?all=1', token),
+        ]);
+        if (!cancelled) {
+          setError('');
+          setClubs(clubsData);
+          setCamps(campsData);
+        }
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) {
+          setClubs([]);
+          setCamps([]);
+          setError(err instanceof Error ? err.message : 'Dashboard-Daten konnten nicht geladen werden');
+        }
+      }
+    };
+
+    void loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, token, navigate]);
 
   const handleEditCamp = async (camp: Camp) => {
     const newTitle = prompt('Neuer Titel:', camp.title);
@@ -206,7 +262,7 @@ export const AdminDashboard: React.FC = () => {
                 <div className="management-main no-thumb">
                   <div>
                     <h3>{camp.title}</h3>
-                    <p>{camp.club_name} · {camp.type} · {camp.age_from}-{camp.age_to} Jahre</p>
+                    <p>{camp.club_name} · {camp.type} · {camp.location_text || 'Ort offen'} · {camp.min_age}-{camp.max_age} Jahre</p>
                   </div>
                 </div>
                 <div className="item-actions">

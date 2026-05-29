@@ -11,8 +11,8 @@ class CampsTest extends TestCase {
         $db->exec(file_get_contents(__DIR__ . '/../schema.sql'));
 
         $db->exec("INSERT INTO users (id, username, password_hash, role) VALUES (1, 'club1', 'hash', 'club')");
-        $db->exec("INSERT INTO camps (club_id, title, age_from, age_to, type, is_active) VALUES (1, 'Camp 1', 10, 15, 'Sport', 1)");
-        $db->exec("INSERT INTO camps (club_id, title, age_from, age_to, type, is_active) VALUES (1, 'Camp 2', 8, 12, 'Lager', 0)");
+        $db->exec("INSERT INTO camps (club_id, title, min_age, max_age, type, is_active) VALUES (1, 'Camp 1', 10, 15, 'Sport', 1)");
+        $db->exec("INSERT INTO camps (club_id, title, min_age, max_age, type, is_active) VALUES (1, 'Camp 2', 8, 12, 'Lager', 0)");
     }
 
     protected function tearDown(): void {

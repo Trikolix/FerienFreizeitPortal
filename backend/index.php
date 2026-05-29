@@ -57,10 +57,61 @@ try {
     exit();
 }
 
+function ensureDefaultUser($db, $username, $password, $role, $clubName = null, $contactInfo = null) {
+    $stmt = $db->prepare('SELECT id FROM users WHERE username = ?');
+    $stmt->execute([$username]);
+
+    if ($stmt->fetch(PDO::FETCH_ASSOC)) {
+        return;
+    }
+
+    $hash = password_hash($password, PASSWORD_BCRYPT);
+    $stmt = $db->prepare('INSERT INTO users (username, password_hash, role, club_name, contact_info) VALUES (?, ?, ?, ?, ?)');
+    $stmt->execute([$username, $hash, $role, $clubName, $contactInfo]);
+}
+
+try {
+    ensureDefaultUser($db, 'admin', 'admin', 'admin');
+    ensureDefaultUser($db, 'testverein', 'testverein', 'club', 'Testverein Westsachsen', 'testverein@example.test');
+} catch (PDOException $e) {
+    error_log("Default User Seed Error: " . $e->getMessage());
+}
+
 // Central logging
 function logError($message) {
     error_log(date('[Y-m-d H:i:s] ') . $message . "\n", 3, __DIR__ . '/error.log');
 }
+
+function ensureCampColumns($db, $dbConnection) {
+    $dateType = $dbConnection === 'pgsql' ? 'TIMESTAMP' : 'DATETIME';
+    $priceType = $dbConnection === 'pgsql' ? 'DOUBLE PRECISION' : 'REAL';
+    $columns = [
+        'min_age' => 'INTEGER',
+        'max_age' => 'INTEGER',
+        'location_text' => 'TEXT',
+        'starts_at' => $dateType,
+        'ends_at' => $dateType,
+        'price_eur' => $priceType,
+        'registration_deadline' => $dateType,
+    ];
+
+    foreach ($columns as $name => $type) {
+        try {
+            $db->exec("ALTER TABLE camps ADD COLUMN $name $type");
+        } catch (PDOException $e) {
+            // Existing installations may already have the column.
+        }
+    }
+
+    try {
+        $db->exec('UPDATE camps SET min_age = age_from WHERE min_age IS NULL AND age_from IS NOT NULL');
+        $db->exec('UPDATE camps SET max_age = age_to WHERE max_age IS NULL AND age_to IS NOT NULL');
+    } catch (PDOException $e) {
+        // Older compatibility columns are not present on fresh databases.
+    }
+}
+
+ensureCampColumns($db, $dbConnection);
 
 // Helper: send JSON response
 function jsonResponse($data, $statusCode = 200) {
@@ -80,26 +131,6 @@ if (php_sapi_name() === 'cli-server' && is_file(__DIR__ . $requestUri)) {
 
 $requestMethod = $_SERVER['REQUEST_METHOD'];
 
-// Auth token validation
-function authenticateUser($db) {
-    $headers = apache_request_headers();
-    $authHeader = $headers['Authorization'] ?? '';
-
-    if (preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
-        $token = $matches[1];
-        $now = date('Y-m-d H:i:s');
-
-        $stmt = $db->prepare('SELECT u.* FROM users u JOIN sessions s ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ?');
-        $stmt->execute([$token, $now]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if ($user) {
-            return $user;
-        }
-    }
-    return null;
-}
-
 if (!function_exists('apache_request_headers')) {
     function apache_request_headers() {
         $arh = array();
@@ -118,6 +149,114 @@ if (!function_exists('apache_request_headers')) {
         }
         return( $arh );
     }
+}
+
+function getAuthorizationHeader() {
+    if (!empty($_SERVER['HTTP_AUTHORIZATION'])) {
+        return $_SERVER['HTTP_AUTHORIZATION'];
+    }
+
+    if (!empty($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
+        return $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
+    }
+
+    $headers = apache_request_headers();
+    foreach ($headers as $key => $value) {
+        if (strtolower($key) === 'authorization') {
+            return $value;
+        }
+    }
+
+    return '';
+}
+
+// Auth token validation
+function authenticateUser($db) {
+    $authHeader = getAuthorizationHeader();
+
+    if (preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
+        $token = $matches[1];
+        $now = date('Y-m-d H:i:s');
+
+        $stmt = $db->prepare('SELECT u.* FROM users u JOIN sessions s ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ?');
+        $stmt->execute([$token, $now]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($user) {
+            return $user;
+        }
+    }
+    return null;
+}
+
+function getCampForUser($db, $campId, $user) {
+    $checkStmt = $db->prepare('SELECT * FROM camps WHERE id = ?');
+    $checkStmt->execute([$campId]);
+    $camp = $checkStmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$camp || ($camp['club_id'] !== $user['id'] && $user['role'] !== 'admin')) {
+        return null;
+    }
+
+    return $camp;
+}
+
+function saveUploadedCampImages($db, $campId) {
+    if (!isset($_FILES['images'])) {
+        return [];
+    }
+
+    $stmtImg = $db->prepare('INSERT INTO camp_images (camp_id, image_url) VALUES (?, ?)');
+    $files = $_FILES['images'];
+    $allowedMimeTypes = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+    $savedImages = [];
+
+    for ($i = 0; $i < count($files['name']); $i++) {
+        if ($files['error'][$i] !== UPLOAD_ERR_OK) {
+            continue;
+        }
+
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mimeType = finfo_file($finfo, $files['tmp_name'][$i]);
+        finfo_close($finfo);
+
+        if (!array_key_exists($mimeType, $allowedMimeTypes)) {
+            continue;
+        }
+
+        $ext = $allowedMimeTypes[$mimeType];
+        $filename = uniqid('', true) . '.' . $ext;
+
+        $uploadDir = __DIR__ . '/uploads';
+        if (!is_dir($uploadDir)) {
+            mkdir($uploadDir, 0755, true);
+        }
+
+        $destination = $uploadDir . '/' . $filename;
+        if (move_uploaded_file($files['tmp_name'][$i], $destination)) {
+            $imageUrl = '/uploads/' . $filename;
+            $stmtImg->execute([$campId, $imageUrl]);
+            $savedImages[] = $imageUrl;
+        }
+    }
+
+    return $savedImages;
+}
+
+function validateCampDates($data) {
+    $startsAt = !empty($data['starts_at']) ? strtotime($data['starts_at']) : null;
+    $endsAt = !empty($data['ends_at']) ? strtotime($data['ends_at']) : null;
+    $registrationDeadline = !empty($data['registration_deadline']) ? strtotime($data['registration_deadline']) : null;
+
+    if ($startsAt && $endsAt && $endsAt <= $startsAt) {
+        return 'Das Ende der Freizeit muss nach dem Beginn liegen.';
+    }
+
+    if ($registrationDeadline && $startsAt && $registrationDeadline >= $startsAt) {
+        return 'Der Anmeldeschluss muss vor dem Beginn der Freizeit liegen.';
+    }
+
+    return null;
 }
 
 try {
@@ -144,8 +283,7 @@ try {
         }
     }
     elseif ($requestUri === '/api/logout' && $requestMethod === 'POST') {
-        $headers = apache_request_headers();
-        $authHeader = $headers['Authorization'] ?? '';
+        $authHeader = getAuthorizationHeader();
 
         if (preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
             $token = $matches[1];
@@ -168,43 +306,20 @@ try {
                 $data = json_decode(file_get_contents('php://input'), true) ?? [];
             }
 
-            $stmt = $db->prepare('INSERT INTO camps (club_id, title, age_from, age_to, description, location_lat, location_lng, type, period, cost, accessibility) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $dateError = validateCampDates($data);
+            if ($dateError) {
+                jsonResponse(['error' => $dateError], 400);
+            }
+
+            $stmt = $db->prepare('INSERT INTO camps (club_id, title, min_age, max_age, description, location_text, location_lat, location_lng, type, starts_at, ends_at, price_eur, registration_deadline) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             $stmt->execute([
-                $user['id'], $data['title'] ?? '', $data['age_from'] ?? null, $data['age_to'] ?? null, $data['description'] ?? '',
-                $data['location_lat'] ?? null, $data['location_lng'] ?? null, $data['type'] ?? '', $data['period'] ?? '', $data['cost'] ?? '', $data['accessibility'] ?? ''
+                $user['id'], $data['title'] ?? '', $data['min_age'] ?? null, $data['max_age'] ?? null, $data['description'] ?? '',
+                $data['location_text'] ?? '', $data['location_lat'] ?? null, $data['location_lng'] ?? null, $data['type'] ?? '', $data['starts_at'] ?? null,
+                $data['ends_at'] ?? null, $data['price_eur'] ?? null, $data['registration_deadline'] ?? null
             ]);
             $newCampId = $db->lastInsertId();
 
-            // Handle image uploads
-            if (isset($_FILES['images'])) {
-                $stmtImg = $db->prepare('INSERT INTO camp_images (camp_id, image_url) VALUES (?, ?)');
-                $files = $_FILES['images'];
-
-                $allowedMimeTypes = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
-
-                for ($i = 0; $i < count($files['name']); $i++) {
-                    if ($files['error'][$i] === UPLOAD_ERR_OK) {
-                        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-                        $mimeType = finfo_file($finfo, $files['tmp_name'][$i]);
-                        finfo_close($finfo);
-
-                        if (array_key_exists($mimeType, $allowedMimeTypes)) {
-                            $ext = $allowedMimeTypes[$mimeType];
-                            $filename = uniqid() . '.' . $ext;
-
-                            $uploadDir = __DIR__ . '/uploads';
-                            if (!is_dir($uploadDir)) {
-                                mkdir($uploadDir, 0755, true);
-                            }
-
-                            $destination = $uploadDir . '/' . $filename;
-                            if (move_uploaded_file($files['tmp_name'][$i], $destination)) {
-                                $stmtImg->execute([$newCampId, '/uploads/' . $filename]);
-                            }
-                        }
-                    }
-                }
-            }
+            saveUploadedCampImages($db, $newCampId);
 
             jsonResponse(['message' => 'Camp created successfully', 'id' => $newCampId]);
         }
@@ -212,32 +327,30 @@ try {
             // PHP doesn't parse multipart/form-data for PUT out of the box easily.
             // A common workaround is to use POST with a _method field, but for simplicity we assume
             // json if editing without images, or we can just parse php://input.
-            $data = json_decode(file_get_contents('php://input'), true);
+            $data = json_decode(file_get_contents('php://input'), true) ?? [];
 
             // Check ownership
-            $checkStmt = $db->prepare('SELECT club_id FROM camps WHERE id = ?');
-            $checkStmt->execute([$campId]);
-            $camp = $checkStmt->fetch(PDO::FETCH_ASSOC);
-
-            if (!$camp || ($camp['club_id'] !== $user['id'] && $user['role'] !== 'admin')) {
+            if (!getCampForUser($db, $campId, $user)) {
                 jsonResponse(['error' => 'Forbidden'], 403);
             }
 
-            $stmt = $db->prepare('UPDATE camps SET title = ?, age_from = ?, age_to = ?, description = ?, location_lat = ?, location_lng = ?, type = ?, period = ?, cost = ?, accessibility = ?, is_active = ? WHERE id = ?');
+            $dateError = validateCampDates($data);
+            if ($dateError) {
+                jsonResponse(['error' => $dateError], 400);
+            }
+
+            $stmt = $db->prepare('UPDATE camps SET title = ?, min_age = ?, max_age = ?, description = ?, location_text = ?, location_lat = ?, location_lng = ?, type = ?, starts_at = ?, ends_at = ?, price_eur = ?, registration_deadline = ?, is_active = ? WHERE id = ?');
             $stmt->execute([
-                $data['title'] ?? '', $data['age_from'] ?? null, $data['age_to'] ?? null, $data['description'] ?? '',
-                $data['location_lat'] ?? null, $data['location_lng'] ?? null, $data['type'] ?? '', $data['period'] ?? '',
-                $data['cost'] ?? '', $data['accessibility'] ?? '', $data['is_active'] ?? 1, $campId
+                $data['title'] ?? '', $data['min_age'] ?? null, $data['max_age'] ?? null, $data['description'] ?? '',
+                $data['location_text'] ?? '', $data['location_lat'] ?? null, $data['location_lng'] ?? null, $data['type'] ?? '', $data['starts_at'] ?? null,
+                $data['ends_at'] ?? null, $data['price_eur'] ?? null, $data['registration_deadline'] ?? null,
+                $data['is_active'] ?? 1, $campId
             ]);
 
             jsonResponse(['message' => 'Camp updated successfully']);
         }
         elseif ($requestMethod === 'DELETE' && $campId) {
-            $checkStmt = $db->prepare('SELECT club_id FROM camps WHERE id = ?');
-            $checkStmt->execute([$campId]);
-            $camp = $checkStmt->fetch(PDO::FETCH_ASSOC);
-
-            if (!$camp || ($camp['club_id'] !== $user['id'] && $user['role'] !== 'admin')) {
+            if (!getCampForUser($db, $campId, $user)) {
                 jsonResponse(['error' => 'Forbidden'], 403);
             }
 
@@ -245,6 +358,59 @@ try {
             $stmt->execute([$campId]);
             jsonResponse(['message' => 'Camp deleted successfully']);
         }
+    }
+    elseif (preg_match('/^\/api\/camps\/(\d+)\/images$/', $requestUri, $matches) && $requestMethod === 'POST') {
+        $user = authenticateUser($db);
+        if (!$user) {
+            jsonResponse(['error' => 'Unauthorized'], 401);
+        }
+
+        $campId = $matches[1];
+        if (!getCampForUser($db, $campId, $user)) {
+            jsonResponse(['error' => 'Forbidden'], 403);
+        }
+
+        $savedImages = saveUploadedCampImages($db, $campId);
+        jsonResponse(['message' => 'Images uploaded successfully', 'images' => $savedImages]);
+    }
+    elseif (preg_match('/^\/api\/camps\/(\d+)\/images$/', $requestUri, $matches) && $requestMethod === 'DELETE') {
+        $user = authenticateUser($db);
+        if (!$user) {
+            jsonResponse(['error' => 'Unauthorized'], 401);
+        }
+
+        $campId = $matches[1];
+        if (!getCampForUser($db, $campId, $user)) {
+            jsonResponse(['error' => 'Forbidden'], 403);
+        }
+
+        $data = json_decode(file_get_contents('php://input'), true) ?? [];
+        $imageUrl = $data['image_url'] ?? '';
+
+        if (!$imageUrl) {
+            jsonResponse(['error' => 'image_url is required'], 400);
+        }
+
+        $stmt = $db->prepare('SELECT image_url FROM camp_images WHERE camp_id = ? AND image_url = ?');
+        $stmt->execute([$campId, $imageUrl]);
+        $image = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$image) {
+            jsonResponse(['error' => 'Image not found'], 404);
+        }
+
+        $deleteStmt = $db->prepare('DELETE FROM camp_images WHERE camp_id = ? AND image_url = ?');
+        $deleteStmt->execute([$campId, $imageUrl]);
+
+        if (str_starts_with($imageUrl, '/uploads/')) {
+            $filePath = realpath(__DIR__ . $imageUrl);
+            $uploadDir = realpath(__DIR__ . '/uploads');
+            if ($filePath && $uploadDir && str_starts_with($filePath, $uploadDir) && is_file($filePath)) {
+                unlink($filePath);
+            }
+        }
+
+        jsonResponse(['message' => 'Image deleted successfully']);
     }
     elseif ($requestUri === '/api/admin/users' && $requestMethod === 'POST') {
         $user = authenticateUser($db);
@@ -287,6 +453,23 @@ try {
 
         jsonResponse($users);
     }
+    elseif (preg_match('/^\/api\/camps\/(\d+)$/', $requestUri, $matches) && $requestMethod === 'GET') {
+        $campId = $matches[1];
+        $query = 'SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id WHERE c.id = ? AND c.is_active = 1';
+        $stmt = $db->prepare($query);
+        $stmt->execute([$campId]);
+        $camp = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$camp) {
+            jsonResponse(['error' => 'Camp not found'], 404);
+        }
+
+        $stmtImg = $db->prepare('SELECT image_url FROM camp_images WHERE camp_id = ?');
+        $stmtImg->execute([$camp['id']]);
+        $camp['images'] = $stmtImg->fetchAll(PDO::FETCH_COLUMN);
+
+        jsonResponse($camp);
+    }
     elseif ($requestUri === '/api/camps' && $requestMethod === 'GET') {
         $query = 'SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id';
         $params = [];
@@ -306,7 +489,7 @@ try {
 
         if (isset($_GET['age'])) {
             $age = (int)$_GET['age'];
-            $query .= ' AND (c.age_from <= ? AND c.age_to >= ?)';
+            $query .= ' AND (c.min_age <= ? AND c.max_age >= ?)';
             $params[] = $age;
             $params[] = $age;
         }

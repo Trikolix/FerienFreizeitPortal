@@ -28,6 +28,10 @@ Dies startet das React-Frontend unter `http://localhost:5173` und das PHP-Backen
 * Benutzername: `admin`
 * Passwort: `admin`
 
+**Standard Testverein:**
+* Benutzername: `testverein`
+* Passwort: `testverein`
+
 ## Ausführung via Docker (Gesamter Stack)
 
 Um die gesamte Anwendung vollständig isoliert (Frontend, PHP-Backend und MySQL-Datenbank) laufen zu lassen:

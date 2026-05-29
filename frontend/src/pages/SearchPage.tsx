@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { MapContainer, Marker, Popup, TileLayer, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { motion } from 'framer-motion';
-import { CalendarDays, Filter, List, Map, MapPin, Search, Tag, UsersRound } from 'lucide-react';
+import { CalendarDays, Euro, Filter, List, Map, MapPin, Search, Tag, UsersRound } from 'lucide-react';
 
 delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -16,17 +17,78 @@ interface Camp {
   id: number;
   title: string;
   club_name: string;
-  age_from: number;
-  age_to: number;
+  min_age: number;
+  max_age: number;
   description: string;
   type: string;
+  location_text?: string;
   location_lat: number;
   location_lng: number;
-  period?: string;
-  cost?: string;
-  accessibility?: string;
+  starts_at?: string;
+  ends_at?: string;
+  price_eur?: number | string;
+  registration_deadline?: string;
   images?: string[];
 }
+
+interface MapBoundsEventsProps {
+  onBoundsChange: (bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number }) => void;
+}
+
+const MapBoundsEvents: React.FC<MapBoundsEventsProps> = ({ onBoundsChange }) => {
+  const map = useMapEvents({
+    moveend: () => {
+      const mapBounds = map.getBounds();
+      onBoundsChange({
+        minLat: mapBounds.getSouth(),
+        maxLat: mapBounds.getNorth(),
+        minLng: mapBounds.getWest(),
+        maxLng: mapBounds.getEast(),
+      });
+    },
+  });
+  return null;
+};
+
+const parseDateTime = (value?: string) => {
+  if (!value) return null;
+  const date = new Date(value.replace(' ', 'T'));
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const formatDateRange = (startValue?: string, endValue?: string) => {
+  const start = parseDateTime(startValue);
+  const end = parseDateTime(endValue);
+
+  if (!start || !end) return null;
+
+  const sameDay = start.toDateString() === end.toDateString();
+  if (sameDay) {
+    const day = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit' }).format(start);
+    const startTime = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' }).format(start);
+    const endTime = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' }).format(end);
+    return `${day} ${startTime}-${endTime}`;
+  }
+
+  const formatDay = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit' });
+  return `${formatDay.format(start)} - ${formatDay.format(end)}`;
+};
+
+const formatPrice = (value?: number | string) => {
+  if (value === undefined || value === null || value === '') return 'Teilnahmebeitrag auf Anfrage';
+  const amount = Number(value);
+  if (Number.isNaN(amount)) return String(value);
+
+  return new Intl.NumberFormat('de-DE', {
+    style: 'currency',
+    currency: 'EUR',
+  }).format(amount);
+};
+
+const isRegistrationClosed = (value?: string) => {
+  const deadline = parseDateTime(value);
+  return Boolean(deadline && deadline < new Date());
+};
 
 export const SearchPage: React.FC = () => {
   const [camps, setCamps] = useState<Camp[]>([]);
@@ -59,42 +121,20 @@ export const SearchPage: React.FC = () => {
     fetchCamps();
   }, [ageFilter, typeFilter, bounds, viewMode]);
 
-  useEffect(() => {
-    if (viewMode === 'list') {
-      setBounds(null);
-    }
-  }, [viewMode]);
-
   const typeOptions = useMemo(() => {
     const fallback = ['Sport', 'Lager', 'Kreativ', 'Bildung', 'Natur'];
     const fromCamps = Array.from(new Set(camps.map((camp) => camp.type).filter(Boolean)));
     return Array.from(new Set([...fallback, ...fromCamps]));
   }, [camps]);
 
-  const MapEvents = () => {
-    const map = useMapEvents({
-      moveend: () => {
-        const mapBounds = map.getBounds();
-        setBounds({
-          minLat: mapBounds.getSouth(),
-          maxLat: mapBounds.getNorth(),
-          minLng: mapBounds.getWest(),
-          maxLng: mapBounds.getEast(),
-        });
-      },
-    });
-    return null;
-  };
-
   return (
     <div className="search-page">
       <section className="hero-panel">
         <div className="hero-copy">
           <span className="eyebrow">Ferien, Vereine, Orte</span>
-          <h1>Freizeiten finden, die wirklich zu Kindern und Jugendlichen passen.</h1>
+          <h1>Ferienfreizeiten in Westsachsen finden.</h1>
           <p>
-            Durchsuche Angebote in Westsachsen nach Alter, Kategorie und Umgebung. Die Ergebnisse sind
-            schnell scannbar, barrierearm gestaltet und bei Bedarf direkt auf der Karte sichtbar.
+            Angebote von Jugendvereinen und Trägern mit klaren Terminen, Altersangaben und Teilnahmebeiträgen.
           </p>
         </div>
         <div className="hero-stats" aria-label="Überblick">
@@ -105,10 +145,6 @@ export const SearchPage: React.FC = () => {
           <div>
             <strong>{typeOptions.length}</strong>
             <span>Kategorien</span>
-          </div>
-          <div>
-            <strong>4</strong>
-            <span>zugängliche Designs</span>
           </div>
         </div>
       </section>
@@ -153,7 +189,10 @@ export const SearchPage: React.FC = () => {
           <button
             type="button"
             className={viewMode === 'list' ? 'is-active' : ''}
-            onClick={() => setViewMode('list')}
+            onClick={() => {
+              setViewMode('list');
+              setBounds(null);
+            }}
             aria-pressed={viewMode === 'list'}
           >
             <List size={18} />
@@ -196,39 +235,48 @@ export const SearchPage: React.FC = () => {
                   className="camp-card"
                   whileHover={{ y: -4, transition: { duration: 0.18 } }}
                 >
-                  <div className="camp-media">
-                    {camp.images?.length ? (
-                      <img src={camp.images[0]} alt="" />
-                    ) : (
-                      <div className="camp-media-fallback">
-                        <MapPin size={30} />
-                      </div>
-                    )}
-                    <span className="camp-type">{camp.type}</span>
-                  </div>
-                  <div className="camp-body">
-                    <div>
-                      <h2>{camp.title}</h2>
-                      <p className="provider">{camp.club_name}</p>
-                    </div>
-                    <div className="camp-meta">
-                      <span>
-                        <UsersRound size={16} />
-                        {camp.age_from}-{camp.age_to} Jahre
-                      </span>
-                      {camp.period && (
-                        <span>
-                          <CalendarDays size={16} />
-                          {camp.period}
-                        </span>
+                  <Link className="camp-card-link" to={`/freizeiten/${camp.id}`}>
+                    <div className="camp-media">
+                      {camp.images?.length ? (
+                        <img src={camp.images[0]} alt="" />
+                      ) : (
+                        <div className="camp-media-fallback">
+                          <MapPin size={30} />
+                        </div>
                       )}
+                      <span className="camp-type">{camp.type}</span>
                     </div>
-                    <p className="camp-description">{camp.description}</p>
-                    <div className="camp-footer">
-                      <span>{camp.cost || 'Kosten auf Anfrage'}</span>
-                      <span>{camp.accessibility || 'Details beim Anbieter'}</span>
+                    <div className="camp-body">
+                      <div>
+                        <h2>{camp.title}</h2>
+                        <p className="provider">{camp.club_name}</p>
+                      </div>
+                      <div className="camp-meta">
+                        <span>
+                          <UsersRound size={16} />
+                          {camp.min_age}-{camp.max_age} Jahre
+                        </span>
+                        <span>
+                          <MapPin size={16} />
+                          {camp.location_text || 'Ort offen'}
+                        </span>
+                        {formatDateRange(camp.starts_at, camp.ends_at) && (
+                          <span>
+                            <CalendarDays size={16} />
+                            {formatDateRange(camp.starts_at, camp.ends_at)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="camp-description">{camp.description}</p>
+                      <div className="camp-footer">
+                        <span>
+                          <Euro size={16} />
+                          {formatPrice(camp.price_eur)}
+                        </span>
+                        {isRegistrationClosed(camp.registration_deadline) && <span className="is-warning">Anmeldeschluss vorbei</span>}
+                      </div>
                     </div>
-                  </div>
+                  </Link>
                 </motion.li>
               ))}
             </motion.ul>
@@ -241,7 +289,7 @@ export const SearchPage: React.FC = () => {
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
-            <MapEvents />
+            <MapBoundsEvents onBoundsChange={setBounds} />
             {camps.filter((camp) => camp.location_lat && camp.location_lng).map((camp) => (
               <Marker key={camp.id} position={[camp.location_lat, camp.location_lng]}>
                 <Popup>
@@ -249,7 +297,15 @@ export const SearchPage: React.FC = () => {
                   <br />
                   {camp.club_name}
                   <br />
-                  {camp.age_from}-{camp.age_to} Jahre
+                  {camp.location_text && (
+                    <>
+                      {camp.location_text}
+                      <br />
+                    </>
+                  )}
+                  {camp.min_age}-{camp.max_age} Jahre
+                  <br />
+                  <Link to={`/freizeiten/${camp.id}`}>Details ansehen</Link>
                 </Popup>
               </Marker>
             ))}

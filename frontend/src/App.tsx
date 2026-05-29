@@ -6,6 +6,7 @@ import { LoginPage } from './pages/LoginPage';
 import { ClubDashboard } from './pages/ClubDashboard';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { Impressum } from './pages/Impressum';
+import { CampDetailPage } from './pages/CampDetailPage';
 import './index.css';
 
 export const App: React.FC = () => {
@@ -14,6 +15,7 @@ export const App: React.FC = () => {
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<SearchPage />} />
+          <Route path="freizeiten/:id" element={<CampDetailPage />} />
           <Route path="login" element={<LoginPage />} />
           <Route path="dashboard" element={<ClubDashboard />} />
           <Route path="admin" element={<AdminDashboard />} />

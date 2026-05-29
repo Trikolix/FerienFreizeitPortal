@@ -1,44 +1,42 @@
-import React, { useEffect } from 'react';
+import React, { useState } from 'react';
 import { Outlet, Link, NavLink, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Compass, LogIn, LogOut, Palette, Shield, TentTree, UserRoundCog } from 'lucide-react';
-import { type Theme, useThemeStore } from '../store/themeStore';
+import { Compass, LogIn, LogOut, Menu, Shield, UserRoundCog, X } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
-
-const themes: Array<{ value: Theme; label: string; note: string }> = [
-  { value: 'default', label: 'Sonnenklar', note: 'warm, modern' },
-  { value: 'colorblind', label: 'Kobalt', note: 'rot-grün-sicher' },
-  { value: 'deuteranopia', label: 'Graphit', note: 'maximal unterscheidbar' },
-  { value: 'high-contrast', label: 'Kontrast', note: 'WCAG stark' },
-];
+import headerCircles from '../assets/header_circles.svg';
+import logoJugendring from '../assets/logo_jugendring_westsachsen.svg';
 
 export const Layout: React.FC = () => {
-  const { theme, setTheme } = useThemeStore();
   const { user, logout } = useAuthStore();
   const location = useLocation();
-
-  useEffect(() => {
-    document.documentElement.className = `theme-${theme}`;
-  }, [theme]);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   return (
-    <div className={`app-container theme-${theme}`}>
+    <div className="app-container">
       <header className="site-header">
+        <img className="header-circles" src={headerCircles} alt="" aria-hidden="true" />
         <div className="header-shell">
-          <Link to="/" className="brand" aria-label="Westsachsen Ferienfreizeiten Startseite">
-            <span className="brand-mark">
-              <TentTree size={22} />
-            </span>
-            <span>
-              <span className="brand-title">FreizeitPortal</span>
-              <span className="brand-subtitle">Westsachsen</span>
-            </span>
+          <span aria-hidden="true" />
+
+          <Link to="/" className="brand-logo" aria-label="Jugendring Westsachsen Ferienfreizeiten Startseite">
+            <img src={logoJugendring} alt="Jugendring Westsachsen" />
           </Link>
 
-          <nav className="main-nav" aria-label="Hauptnavigation">
+          <button
+            className="menu-toggle"
+            type="button"
+            onClick={() => setIsMenuOpen((current) => !current)}
+            aria-label={isMenuOpen ? 'Menü schließen' : 'Menü öffnen'}
+            aria-expanded={isMenuOpen}
+            aria-controls="main-navigation"
+          >
+            {isMenuOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+
+          <nav id="main-navigation" className={`main-nav ${isMenuOpen ? 'is-open' : ''}`} aria-label="Hauptnavigation">
             <ul>
               <li>
-                <NavLink to="/" end>
+                <NavLink to="/" end onClick={() => setIsMenuOpen(false)}>
                   <Compass size={17} />
                   Suche
                 </NavLink>
@@ -46,13 +44,13 @@ export const Layout: React.FC = () => {
               {user && (
                 <>
                   <li>
-                    <NavLink to={user.role === 'admin' ? '/admin' : '/dashboard'}>
+                    <NavLink to={user.role === 'admin' ? '/admin' : '/dashboard'} onClick={() => setIsMenuOpen(false)}>
                       {user.role === 'admin' ? <Shield size={17} /> : <UserRoundCog size={17} />}
                       Dashboard
                     </NavLink>
                   </li>
                   <li>
-                    <button className="icon-button text-button" onClick={logout} aria-label="Logout">
+                    <button className="icon-button text-button" onClick={() => { logout(); setIsMenuOpen(false); }} aria-label="Logout">
                       <LogOut size={17} />
                       {user.username}
                     </button>
@@ -61,7 +59,7 @@ export const Layout: React.FC = () => {
               )}
               {!user && (
                 <li>
-                  <NavLink to="/login">
+                  <NavLink to="/login" onClick={() => setIsMenuOpen(false)}>
                     <LogIn size={17} />
                     Login
                   </NavLink>
@@ -69,21 +67,6 @@ export const Layout: React.FC = () => {
               )}
             </ul>
           </nav>
-
-          <div className="theme-switcher" aria-label="Farbschema auswählen">
-            <Palette size={17} />
-            <select
-              value={theme}
-              onChange={(event) => setTheme(event.target.value as Theme)}
-              aria-label="Farbschema auswählen"
-            >
-              {themes.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label} · {item.note}
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
       </header>
 
