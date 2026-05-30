@@ -8,6 +8,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
+require_once __DIR__ . '/helpers.php';
+
 $localConfigPath = __DIR__ . '/config.local.php';
 $localConfig = is_file($localConfigPath) ? require $localConfigPath : [];
 if (!is_array($localConfig)) {
@@ -228,16 +230,6 @@ function jsonResponse($data, $statusCode = 200) {
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
     exit();
-}
-
-function appBaseUrl() {
-    return rtrim(getenv('APP_BASE_URL') ?: 'http://localhost:5173', '/');
-}
-
-function apiBaseUrl() {
-    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-    $host = $_SERVER['HTTP_HOST'] ?? 'localhost:8000';
-    return $scheme . '://' . $host;
 }
 
 function sendHtmlMail($to, $subject, $html) {
