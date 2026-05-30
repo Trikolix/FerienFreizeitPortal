@@ -72,17 +72,7 @@ try {
     exit();
 }
 
-function normalizeRole($role) {
-    return $role === 'club' ? 'user' : $role;
-}
-
-function isAdminRole($user) {
-    return in_array(normalizeRole($user['role'] ?? ''), ['master_admin', 'admin'], true);
-}
-
-function isMasterAdmin($user) {
-    return normalizeRole($user['role'] ?? '') === 'master_admin';
-}
+require_once __DIR__ . '/roles.php';
 
 function ensureUserSchema($db, $dbConnection) {
     if ($dbConnection === 'sqlite') {
