@@ -222,13 +222,7 @@ function ensureCampColumns($db, $dbConnection) {
 
 ensureCampColumns($db, $dbConnection);
 
-// Helper: send JSON response
-function jsonResponse($data, $statusCode = 200) {
-    http_response_code($statusCode);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode($data, JSON_UNESCAPED_UNICODE);
-    exit();
-}
+require_once __DIR__ . '/helpers.php';
 
 function appBaseUrl() {
     return rtrim(getenv('APP_BASE_URL') ?: 'http://localhost:5173', '/');
