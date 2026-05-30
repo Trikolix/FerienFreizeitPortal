@@ -16,14 +16,7 @@ if (!is_array($localConfig)) {
     $localConfig = [];
 }
 
-function configValue($config, $key, $default) {
-    $envValue = getenv($key);
-    if ($envValue !== false && $envValue !== '') {
-        return $envValue;
-    }
-
-    return $config[$key] ?? $default;
-}
+require_once __DIR__ . '/utils.php';
 
 // Database Connection
 $dbConnection = configValue($localConfig, 'DB_CONNECTION', 'sqlite');
