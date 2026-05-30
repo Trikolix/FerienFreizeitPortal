@@ -302,6 +302,8 @@ function userPayload($user) {
     ];
 }
 
+if (defined("TESTING") && TESTING) { return; }
+
 // Router
 $requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
