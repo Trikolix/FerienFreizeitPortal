@@ -62,7 +62,8 @@ try {
 
             // Insert default master admin if users table is freshly created
             $hash = password_hash('admin', PASSWORD_BCRYPT);
-            $db->exec("INSERT INTO users (email, username, password_hash, role, display_name, is_active) VALUES ('admin@example.test', 'admin', '$hash', 'master_admin', 'Master-Admin', 1)");
+            $stmt = $db->prepare("INSERT INTO users (email, username, password_hash, role, display_name, is_active) VALUES ('admin@example.test', 'admin', ?, 'master_admin', 'Master-Admin', 1)");
+            $stmt->execute([$hash]);
         }
     }
 } catch (PDOException $e) {
@@ -106,13 +107,14 @@ function ensureUserSchema($db, $dbConnection) {
                 )
             ";
             $db->exec($schema);
-            $db->exec("
+            $stmt = $db->prepare("
                 INSERT INTO users (id, email, username, password_hash, role, display_name, club_name, contact_info, is_active)
-                SELECT id, username || '@example.test', username, password_hash,
+                SELECT id, username || ?, username, password_hash,
                     CASE WHEN role = 'club' THEN 'user' ELSE role END,
                     COALESCE(club_name, username), club_name, contact_info, 1
                 FROM users_old
             ");
+            $stmt->execute(['@example.test']);
             $db->exec('DROP TABLE users_old');
             $db->exec('PRAGMA foreign_keys=on');
         }
@@ -135,7 +137,8 @@ function ensureUserSchema($db, $dbConnection) {
 
     try {
         $db->exec("UPDATE users SET role = 'user' WHERE role = 'club'");
-        $db->exec("UPDATE users SET email = username || '@example.test' WHERE email IS NULL OR email = ''");
+        $stmt = $db->prepare("UPDATE users SET email = username || ? WHERE email IS NULL OR email = ''");
+        $stmt->execute(['@example.test']);
         $db->exec("UPDATE users SET display_name = COALESCE(club_name, username) WHERE display_name IS NULL OR display_name = ''");
         $db->exec("UPDATE users SET is_active = 1 WHERE password_hash IS NOT NULL AND (is_active IS NULL OR is_active = 0)");
     } catch (PDOException $e) {
@@ -312,26 +315,6 @@ if (php_sapi_name() === 'cli-server' && is_file(__DIR__ . $requestUri)) {
 
 $requestMethod = $_SERVER['REQUEST_METHOD'];
 
-if (!function_exists('apache_request_headers')) {
-    function apache_request_headers() {
-        $arh = array();
-        $rx_http = '/\AHTTP_/';
-        foreach($_SERVER as $key => $val) {
-            if( preg_match($rx_http, $key) ) {
-                $arh_key = preg_replace($rx_http, '', $key);
-                $rx_matches = array();
-                $rx_matches = explode('_', $arh_key);
-                if( count($rx_matches) > 0 and strlen($arh_key) > 2 ) {
-                    foreach($rx_matches as $ak_key => $ak_val) $rx_matches[$ak_key] = ucfirst(strtolower($ak_val));
-                    $arh_key = implode('-', $rx_matches);
-                }
-                $arh[$arh_key] = $val;
-            }
-        }
-        return( $arh );
-    }
-}
-
 function getAuthorizationHeader() {
     if (!empty($_SERVER['HTTP_AUTHORIZATION'])) {
         return $_SERVER['HTTP_AUTHORIZATION'];
@@ -406,7 +389,7 @@ function saveUploadedCampImages($db, $campId) {
         }
 
         $ext = $allowedMimeTypes[$mimeType];
-        $filename = uniqid('', true) . '.' . $ext;
+        $filename = bin2hex(random_bytes(16)) . '.' . $ext;
 
         $uploadDir = __DIR__ . '/uploads';
         if (!is_dir($uploadDir)) {
@@ -805,10 +788,11 @@ try {
         $currentUser = authenticateUser($db);
 
         if (isset($_GET['club_id'])) {
+            $clubId = (int)$_GET['club_id'];
             $query .= ' WHERE c.club_id = ?';
-            $params[] = $_GET['club_id'];
+            $params[] = $clubId;
             $whereAdded = true;
-            if (!$currentUser || (!isAdminRole($currentUser) && (int)$currentUser['id'] !== (int)$_GET['club_id'])) {
+            if (!$currentUser || (!isAdminRole($currentUser) && (int)$currentUser['id'] !== $clubId)) {
                 $query .= ' AND c.is_active = 1';
             }
         } elseif (isset($_GET['all']) && $_GET['all'] == 1) {
@@ -829,41 +813,52 @@ try {
             $params[] = $age;
         }
 
-        if (isset($_GET['type']) && !empty($_GET['type'])) {
+        if (isset($_GET['type']) && is_string($_GET['type']) && trim($_GET['type']) !== '') {
+            $type = trim($_GET['type']);
             $query .= ' AND c.type = ?';
-            $params[] = $_GET['type'];
+            $params[] = $type;
         }
 
         // Basic geographic bounds filtering
         if (isset($_GET['minLat']) && isset($_GET['maxLat']) && isset($_GET['minLng']) && isset($_GET['maxLng'])) {
             $query .= ' AND (c.location_lat BETWEEN ? AND ? AND c.location_lng BETWEEN ? AND ?)';
-            $params[] = $_GET['minLat'];
-            $params[] = $_GET['maxLat'];
-            $params[] = $_GET['minLng'];
-            $params[] = $_GET['maxLng'];
+            $params[] = (float)$_GET['minLat'];
+            $params[] = (float)$_GET['maxLat'];
+            $params[] = (float)$_GET['minLng'];
+            $params[] = (float)$_GET['maxLng'];
         }
 
         $stmt = $db->prepare($query);
         $stmt->execute($params);
         $camps = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        // Fetch images for camps
-        if (!empty($camps)) {
-            $campIds = array_column($camps, 'id');
-            $placeholders = implode(',', array_fill(0, count($campIds), '?'));
+        // Fetch images for camps in batches to avoid N+1 and SQLite variable limits
+        $campIds = array_column($camps, 'id');
+        foreach ($camps as &$camp) {
+            $camp['images'] = [];
+        }
 
-            $stmtImg = $db->prepare("SELECT camp_id, image_url FROM camp_images WHERE camp_id IN ($placeholders)");
-            $stmtImg->execute($campIds);
-            $allImages = $stmtImg->fetchAll(PDO::FETCH_ASSOC);
-
+        if (!empty($campIds)) {
+            $chunks = array_chunk($campIds, 900);
             $imagesByCamp = [];
-            foreach ($allImages as $img) {
-                $imagesByCamp[$img['camp_id']][] = $img['image_url'];
+
+            foreach ($chunks as $chunk) {
+                $inQuery = implode(',', array_fill(0, count($chunk), '?'));
+                $stmtImg = $db->prepare("SELECT camp_id, image_url FROM camp_images WHERE camp_id IN ($inQuery)");
+                $stmtImg->execute($chunk);
+                $images = $stmtImg->fetchAll(PDO::FETCH_ASSOC);
+
+                foreach ($images as $img) {
+                    $imagesByCamp[$img['camp_id']][] = $img['image_url'];
+                }
             }
 
             foreach ($camps as &$camp) {
-                $camp['images'] = $imagesByCamp[$camp['id']] ?? [];
+                if (isset($imagesByCamp[$camp['id']])) {
+                    $camp['images'] = $imagesByCamp[$camp['id']];
+                }
             }
+            unset($camp);
         }
 
         jsonResponse($camps);
