@@ -805,10 +805,11 @@ try {
         $currentUser = authenticateUser($db);
 
         if (isset($_GET['club_id'])) {
+            $clubId = (int)$_GET['club_id'];
             $query .= ' WHERE c.club_id = ?';
-            $params[] = $_GET['club_id'];
+            $params[] = $clubId;
             $whereAdded = true;
-            if (!$currentUser || (!isAdminRole($currentUser) && (int)$currentUser['id'] !== (int)$_GET['club_id'])) {
+            if (!$currentUser || (!isAdminRole($currentUser) && (int)$currentUser['id'] !== $clubId)) {
                 $query .= ' AND c.is_active = 1';
             }
         } elseif (isset($_GET['all']) && $_GET['all'] == 1) {
@@ -829,18 +830,19 @@ try {
             $params[] = $age;
         }
 
-        if (isset($_GET['type']) && !empty($_GET['type'])) {
+        if (isset($_GET['type']) && is_string($_GET['type']) && trim($_GET['type']) !== '') {
+            $type = trim($_GET['type']);
             $query .= ' AND c.type = ?';
-            $params[] = $_GET['type'];
+            $params[] = $type;
         }
 
         // Basic geographic bounds filtering
         if (isset($_GET['minLat']) && isset($_GET['maxLat']) && isset($_GET['minLng']) && isset($_GET['maxLng'])) {
             $query .= ' AND (c.location_lat BETWEEN ? AND ? AND c.location_lng BETWEEN ? AND ?)';
-            $params[] = $_GET['minLat'];
-            $params[] = $_GET['maxLat'];
-            $params[] = $_GET['minLng'];
-            $params[] = $_GET['maxLng'];
+            $params[] = (float)$_GET['minLat'];
+            $params[] = (float)$_GET['maxLat'];
+            $params[] = (float)$_GET['minLng'];
+            $params[] = (float)$_GET['maxLng'];
         }
 
         $stmt = $db->prepare($query);
