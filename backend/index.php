@@ -303,6 +303,9 @@ function userPayload($user) {
 }
 
 // Router
+if (defined('PHPUNIT_RUNNING') && PHPUNIT_RUNNING) {
+    return;
+}
 $requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
 // Built-in server static file serving
