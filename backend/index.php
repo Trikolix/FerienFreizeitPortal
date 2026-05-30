@@ -848,10 +848,22 @@ try {
         $camps = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         // Fetch images for camps
-        foreach ($camps as &$camp) {
-            $stmtImg = $db->prepare('SELECT image_url FROM camp_images WHERE camp_id = ?');
-            $stmtImg->execute([$camp['id']]);
-            $camp['images'] = $stmtImg->fetchAll(PDO::FETCH_COLUMN);
+        if (!empty($camps)) {
+            $campIds = array_column($camps, 'id');
+            $placeholders = implode(',', array_fill(0, count($campIds), '?'));
+
+            $stmtImg = $db->prepare("SELECT camp_id, image_url FROM camp_images WHERE camp_id IN ($placeholders)");
+            $stmtImg->execute($campIds);
+            $allImages = $stmtImg->fetchAll(PDO::FETCH_ASSOC);
+
+            $imagesByCamp = [];
+            foreach ($allImages as $img) {
+                $imagesByCamp[$img['camp_id']][] = $img['image_url'];
+            }
+
+            foreach ($camps as &$camp) {
+                $camp['images'] = $imagesByCamp[$camp['id']] ?? [];
+            }
         }
 
         jsonResponse($camps);
