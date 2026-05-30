@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/helpers.php';
+
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
@@ -73,17 +75,6 @@ try {
     exit();
 }
 
-function normalizeRole($role) {
-    return $role === 'club' ? 'user' : $role;
-}
-
-function isAdminRole($user) {
-    return in_array(normalizeRole($user['role'] ?? ''), ['master_admin', 'admin'], true);
-}
-
-function isMasterAdmin($user) {
-    return normalizeRole($user['role'] ?? '') === 'master_admin';
-}
 
 function ensureUserSchema($db, $dbConnection) {
     if ($dbConnection === 'sqlite') {
