@@ -847,11 +847,33 @@ try {
         $stmt->execute($params);
         $camps = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        // Fetch images for camps
+        // Fetch images for camps in batches to avoid N+1 and SQLite variable limits
+        $campIds = array_column($camps, 'id');
         foreach ($camps as &$camp) {
-            $stmtImg = $db->prepare('SELECT image_url FROM camp_images WHERE camp_id = ?');
-            $stmtImg->execute([$camp['id']]);
-            $camp['images'] = $stmtImg->fetchAll(PDO::FETCH_COLUMN);
+            $camp['images'] = [];
+        }
+
+        if (!empty($campIds)) {
+            $chunks = array_chunk($campIds, 900);
+            $imagesByCamp = [];
+
+            foreach ($chunks as $chunk) {
+                $inQuery = implode(',', array_fill(0, count($chunk), '?'));
+                $stmtImg = $db->prepare("SELECT camp_id, image_url FROM camp_images WHERE camp_id IN ($inQuery)");
+                $stmtImg->execute($chunk);
+                $images = $stmtImg->fetchAll(PDO::FETCH_ASSOC);
+
+                foreach ($images as $img) {
+                    $imagesByCamp[$img['camp_id']][] = $img['image_url'];
+                }
+            }
+
+            foreach ($camps as &$camp) {
+                if (isset($imagesByCamp[$camp['id']])) {
+                    $camp['images'] = $imagesByCamp[$camp['id']];
+                }
+            }
+            unset($camp);
         }
 
         jsonResponse($camps);
