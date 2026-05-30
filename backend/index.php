@@ -62,7 +62,8 @@ try {
 
             // Insert default master admin if users table is freshly created
             $hash = password_hash('admin', PASSWORD_BCRYPT);
-            $db->exec("INSERT INTO users (email, username, password_hash, role, display_name, is_active) VALUES ('admin@example.test', 'admin', '$hash', 'master_admin', 'Master-Admin', 1)");
+            $stmt = $db->prepare("INSERT INTO users (email, username, password_hash, role, display_name, is_active) VALUES ('admin@example.test', 'admin', ?, 'master_admin', 'Master-Admin', 1)");
+            $stmt->execute([$hash]);
         }
     }
 } catch (PDOException $e) {
@@ -106,13 +107,14 @@ function ensureUserSchema($db, $dbConnection) {
                 )
             ";
             $db->exec($schema);
-            $db->exec("
+            $stmt = $db->prepare("
                 INSERT INTO users (id, email, username, password_hash, role, display_name, club_name, contact_info, is_active)
-                SELECT id, username || '@example.test', username, password_hash,
+                SELECT id, username || ?, username, password_hash,
                     CASE WHEN role = 'club' THEN 'user' ELSE role END,
                     COALESCE(club_name, username), club_name, contact_info, 1
                 FROM users_old
             ");
+            $stmt->execute(['@example.test']);
             $db->exec('DROP TABLE users_old');
             $db->exec('PRAGMA foreign_keys=on');
         }
@@ -135,7 +137,8 @@ function ensureUserSchema($db, $dbConnection) {
 
     try {
         $db->exec("UPDATE users SET role = 'user' WHERE role = 'club'");
-        $db->exec("UPDATE users SET email = username || '@example.test' WHERE email IS NULL OR email = ''");
+        $stmt = $db->prepare("UPDATE users SET email = username || ? WHERE email IS NULL OR email = ''");
+        $stmt->execute(['@example.test']);
         $db->exec("UPDATE users SET display_name = COALESCE(club_name, username) WHERE display_name IS NULL OR display_name = ''");
         $db->exec("UPDATE users SET is_active = 1 WHERE password_hash IS NOT NULL AND (is_active IS NULL OR is_active = 0)");
     } catch (PDOException $e) {
