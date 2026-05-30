@@ -409,7 +409,7 @@ function saveUploadedCampImages($db, $campId) {
         }
 
         $ext = $allowedMimeTypes[$mimeType];
-        $filename = uniqid('', true) . '.' . $ext;
+        $filename = bin2hex(random_bytes(16)) . '.' . $ext;
 
         $uploadDir = __DIR__ . '/uploads';
         if (!is_dir($uploadDir)) {
