@@ -189,6 +189,7 @@ function ensureCampColumns($db, $dbConnection) {
         'ends_at' => $dateType,
         'price_eur' => $priceType,
         'registration_deadline' => $dateType,
+        'status' => "TEXT DEFAULT 'draft'",
     ];
 
     foreach ($columns as $name => $type) {
@@ -202,6 +203,8 @@ function ensureCampColumns($db, $dbConnection) {
     try {
         $db->exec('UPDATE camps SET min_age = age_from WHERE min_age IS NULL AND age_from IS NOT NULL');
         $db->exec('UPDATE camps SET max_age = age_to WHERE max_age IS NULL AND age_to IS NOT NULL');
+        $db->exec("UPDATE camps SET status = 'published' WHERE is_active = 1 AND (status IS NULL OR status = 'draft')");
+        $db->exec("UPDATE camps SET status = 'archived' WHERE is_active = 0 AND (status IS NULL OR status = 'draft')");
     } catch (PDOException $e) {
         // Older compatibility columns are not present on fresh databases.
     }
@@ -517,11 +520,11 @@ try {
                 jsonResponse(['error' => $dateError], 400);
             }
 
-            $stmt = $db->prepare('INSERT INTO camps (club_id, title, min_age, max_age, description, location_text, location_lat, location_lng, type, starts_at, ends_at, price_eur, registration_deadline) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt = $db->prepare('INSERT INTO camps (club_id, title, min_age, max_age, description, location_text, location_lat, location_lng, type, starts_at, ends_at, price_eur, registration_deadline, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             $stmt->execute([
                 $user['id'], $data['title'] ?? '', $data['min_age'] ?? null, $data['max_age'] ?? null, $data['description'] ?? '',
                 $data['location_text'] ?? '', $data['location_lat'] ?? null, $data['location_lng'] ?? null, $data['type'] ?? '', $data['starts_at'] ?? null,
-                $data['ends_at'] ?? null, $data['price_eur'] ?? null, $data['registration_deadline'] ?? null
+                $data['ends_at'] ?? null, $data['price_eur'] ?? null, $data['registration_deadline'] ?? null, $data['status'] ?? 'draft'
             ]);
             $newCampId = $db->lastInsertId();
 
@@ -545,12 +548,12 @@ try {
                 jsonResponse(['error' => $dateError], 400);
             }
 
-            $stmt = $db->prepare('UPDATE camps SET title = ?, min_age = ?, max_age = ?, description = ?, location_text = ?, location_lat = ?, location_lng = ?, type = ?, starts_at = ?, ends_at = ?, price_eur = ?, registration_deadline = ?, is_active = ? WHERE id = ?');
+            $stmt = $db->prepare('UPDATE camps SET title = ?, min_age = ?, max_age = ?, description = ?, location_text = ?, location_lat = ?, location_lng = ?, type = ?, starts_at = ?, ends_at = ?, price_eur = ?, registration_deadline = ?, status = ? WHERE id = ?');
             $stmt->execute([
                 $data['title'] ?? '', $data['min_age'] ?? null, $data['max_age'] ?? null, $data['description'] ?? '',
                 $data['location_text'] ?? '', $data['location_lat'] ?? null, $data['location_lng'] ?? null, $data['type'] ?? '', $data['starts_at'] ?? null,
                 $data['ends_at'] ?? null, $data['price_eur'] ?? null, $data['registration_deadline'] ?? null,
-                $data['is_active'] ?? 1, $campId
+                $data['status'] ?? 'draft', $campId
             ]);
 
             jsonResponse(['message' => 'Camp updated successfully']);
@@ -755,7 +758,7 @@ try {
     }
     elseif (preg_match('/^\/api\/camps\/(\d+)$/', $requestUri, $matches) && $requestMethod === 'GET') {
         $campId = $matches[1];
-        $query = 'SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id WHERE c.id = ? AND c.is_active = 1';
+        $query = 'SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id WHERE c.id = ? AND c.status IN ("published", "fully_booked")';
         $stmt = $db->prepare($query);
         $stmt->execute([$campId]);
         $camp = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -782,7 +785,7 @@ try {
             $params[] = $clubId;
             $whereAdded = true;
             if (!$currentUser || (!isAdminRole($currentUser) && (int)$currentUser['id'] !== $clubId)) {
-                $query .= ' AND c.is_active = 1';
+                $query .= ' AND c.status IN ("published", "fully_booked")';
             }
         } elseif (isset($_GET['all']) && $_GET['all'] == 1) {
             if (!$currentUser || !isAdminRole($currentUser)) {
@@ -791,7 +794,7 @@ try {
             $query .= ' WHERE 1=1'; // Admin wants all
             $whereAdded = true;
         } else {
-            $query .= ' WHERE c.is_active = 1';
+            $query .= ' WHERE c.status IN ("published", "fully_booked")';
             $whereAdded = true;
         }
 
