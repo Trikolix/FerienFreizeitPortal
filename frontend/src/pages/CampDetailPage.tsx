@@ -19,6 +19,7 @@ interface CampDetail {
   ends_at?: string;
   price_eur?: number | string;
   registration_deadline?: string;
+  status: 'draft' | 'published' | 'fully_booked' | 'archived';
   images?: string[];
 }
 
@@ -130,9 +131,10 @@ export const CampDetailPage: React.FC = () => {
       <section className="detail-layout">
         <div className="detail-main">
           <span className="eyebrow">{camp.type}</span>
+          {camp.status === 'fully_booked' && <span className="status-pill is-muted" style={{ display: 'inline-flex', marginLeft: '1rem', verticalAlign: 'middle', marginBottom: '0.2rem' }}>Ausgebucht</span>}
           <h1>{camp.title}</h1>
           <p className="provider">{camp.club_name}</p>
-          <p className="detail-description">{camp.description || 'Keine Beschreibung hinterlegt.'}</p>
+          <div className="detail-description" dangerouslySetInnerHTML={{ __html: camp.description || 'Keine Beschreibung hinterlegt.' }} />
         </div>
 
         <aside className="detail-sidebar" aria-label="Freizeitdetails">

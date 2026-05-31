@@ -18,7 +18,7 @@ interface Camp {
   ends_at: string;
   price_eur: number;
   registration_deadline: string;
-  is_active: number;
+  status: 'draft' | 'published' | 'fully_booked' | 'archived';
 }
 
 interface ClubUser {

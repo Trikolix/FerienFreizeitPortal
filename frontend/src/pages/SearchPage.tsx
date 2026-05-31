@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { CalendarDays, Euro, Filter, List, Map, MapPin, Search, Tag, UsersRound } from 'lucide-react';
 import { SearchMap } from '../components/SearchMap';
+import { stripHtmlAndTruncate } from '../utils/textUtils';
 
 export interface Camp {
   id: number;
@@ -19,6 +20,7 @@ export interface Camp {
   ends_at?: string;
   price_eur?: number | string;
   registration_deadline?: string;
+  status: 'draft' | 'published' | 'fully_booked' | 'archived';
   images?: string[];
 }
 
@@ -225,6 +227,9 @@ export const SearchPage: React.FC = () => {
                         <p className="provider">{camp.club_name}</p>
                       </div>
                       <div className="camp-meta">
+                        {camp.status === 'fully_booked' && (
+                          <span className="status-pill is-muted" style={{ marginRight: '0.5rem' }}>Ausgebucht</span>
+                        )}
                         <span>
                           <UsersRound size={16} />
                           {camp.min_age}-{camp.max_age} Jahre
@@ -240,7 +245,10 @@ export const SearchPage: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <p className="camp-description">{camp.description}</p>
+                      <p className="camp-description">
+                        {stripHtmlAndTruncate(camp.description)}{' '}
+                        <span className="text-button" style={{ fontSize: '0.875rem' }}>weiterlesen</span>
+                      </p>
                       <div className="camp-footer">
                         <span>
                           <Euro size={16} />
