@@ -178,6 +178,18 @@ function logError($message) {
     error_log(date('[Y-m-d H:i:s] ') . $message . "\n", 3, __DIR__ . '/error.log');
 }
 
+function ensureHolidaysSchema($db, $dbConnection) {
+    $dateType = $dbConnection === 'pgsql' ? 'TIMESTAMP' : 'DATETIME';
+    $db->exec("CREATE TABLE IF NOT EXISTS holidays (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        starts_at $dateType NOT NULL,
+        ends_at $dateType NOT NULL
+    )");
+}
+
+ensureHolidaysSchema($db, $dbConnection);
+
 function ensureCampColumns($db, $dbConnection) {
     $dateType = $dbConnection === 'pgsql' ? 'TIMESTAMP' : 'DATETIME';
     $priceType = $dbConnection === 'pgsql' ? 'DOUBLE PRECISION' : 'REAL';
@@ -501,6 +513,33 @@ try {
         }
         jsonResponse(['message' => 'Logged out']);
     }
+    elseif ($requestUri === '/api/holidays' && $requestMethod === 'GET') {
+        $stmt = $db->query('SELECT * FROM holidays ORDER BY starts_at ASC');
+        jsonResponse($stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+    elseif ($requestUri === '/api/admin/holidays' && $requestMethod === 'POST') {
+        $user = authenticateUser($db);
+        if (!$user || !isAdminRole($user)) {
+            jsonResponse(['error' => 'Unauthorized'], 401);
+        }
+        $data = json_decode(file_get_contents('php://input'), true);
+        if (empty($data['name']) || empty($data['starts_at']) || empty($data['ends_at'])) {
+            jsonResponse(['error' => 'Fehlende Felder'], 400);
+        }
+        $stmt = $db->prepare('INSERT INTO holidays (name, starts_at, ends_at) VALUES (?, ?, ?)');
+        $stmt->execute([$data['name'], $data['starts_at'], $data['ends_at']]);
+        jsonResponse(['success' => true, 'id' => $db->lastInsertId()]);
+    }
+    elseif (preg_match('/^\/api\/admin\/holidays\/(\d+)$/', $requestUri, $matches) && $requestMethod === 'DELETE') {
+        $user = authenticateUser($db);
+        if (!$user || !isAdminRole($user)) {
+            jsonResponse(['error' => 'Unauthorized'], 401);
+        }
+        $holidayId = (int)$matches[1];
+        $stmt = $db->prepare('DELETE FROM holidays WHERE id = ?');
+        $stmt->execute([$holidayId]);
+        jsonResponse(['success' => true]);
+    }
     elseif (preg_match('/^\/api\/camps(\/(\d+))?$/', $requestUri, $matches) && in_array($requestMethod, ['POST', 'PUT', 'DELETE'])) {
         $user = authenticateUser($db);
         if (!$user) {
@@ -809,6 +848,16 @@ try {
             $type = trim($_GET['type']);
             $query .= ' AND c.type = ?';
             $params[] = $type;
+        }
+
+        if (isset($_GET['start_date']) && !empty($_GET['start_date'])) {
+            $query .= ' AND DATE(c.starts_at) >= DATE(?)';
+            $params[] = $_GET['start_date'];
+        }
+
+        if (isset($_GET['end_date']) && !empty($_GET['end_date'])) {
+            $query .= ' AND DATE(c.ends_at) <= DATE(?)';
+            $params[] = $_GET['end_date'];
         }
 
         // Basic geographic bounds filtering

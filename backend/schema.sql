@@ -56,3 +56,10 @@ CREATE TABLE IF NOT EXISTS camp_images (
     image_url TEXT NOT NULL,
     FOREIGN KEY(camp_id) REFERENCES camps(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS holidays (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    starts_at DATETIME NOT NULL,
+    ends_at DATETIME NOT NULL
+);

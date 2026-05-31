@@ -2,6 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, CalendarClock, CalendarDays, Euro, MapPin, Tag, UsersRound } from 'lucide-react';
 
+interface Holiday {
+  id: number;
+  name: string;
+  starts_at: string;
+  ends_at: string;
+}
+
 interface CampDetail {
   id: number;
   title: string;
@@ -48,11 +55,24 @@ const formatPrice = (value?: number | string) => {
 export const CampDetailPage: React.FC = () => {
   const { id } = useParams();
   const [camp, setCamp] = useState<CampDetail | null>(null);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
+
+    const fetchHolidays = async () => {
+      try {
+        const response = await fetch('/api/holidays');
+        const data = await response.json();
+        if (!cancelled && Array.isArray(data)) {
+          setHolidays(data);
+        }
+      } catch (err) {
+        console.error('Error fetching holidays', err);
+      }
+    };
 
     const fetchCamp = async () => {
       setIsLoading(true);
@@ -81,6 +101,7 @@ export const CampDetailPage: React.FC = () => {
       }
     };
 
+    void fetchHolidays();
     void fetchCamp();
 
     return () => {
@@ -110,6 +131,14 @@ export const CampDetailPage: React.FC = () => {
   }
 
   const hasLocation = camp.location_lat !== undefined && camp.location_lng !== undefined;
+  const isHoliday = holidays.some(h => {
+    if (!camp.starts_at || !camp.ends_at) return false;
+    const campStart = camp.starts_at.split(' ')[0];
+    const campEnd = camp.ends_at.split(' ')[0];
+    const holidayStart = h.starts_at.split(' ')[0];
+    const holidayEnd = h.ends_at.split(' ')[0];
+    return campStart >= holidayStart && campEnd <= holidayEnd;
+  });
 
   return (
     <article className="camp-detail-page">
@@ -130,7 +159,14 @@ export const CampDetailPage: React.FC = () => {
 
       <section className="detail-layout">
         <div className="detail-main">
-          <span className="eyebrow">{camp.type}</span>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: '0.5rem' }}>
+            <span className="eyebrow" style={{ marginBottom: 0 }}>{camp.type}</span>
+            {isHoliday && (
+              <span className="status-pill is-live" style={{ marginTop: 0 }}>
+                <CalendarDays size={14} style={{ marginRight: 4 }} /> Ferien
+              </span>
+            )}
+          </div>
           {camp.status === 'fully_booked' && <span className="status-pill is-muted" style={{ display: 'inline-flex', marginLeft: '1rem', verticalAlign: 'middle', marginBottom: '0.2rem' }}>Ausgebucht</span>}
           <h1>{camp.title}</h1>
           <p className="provider">{camp.club_name}</p>

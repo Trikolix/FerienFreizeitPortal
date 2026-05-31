@@ -3,6 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { Building2, Pencil, ShieldCheck, Trash2, UserPlus } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 
+interface Holiday {
+  id: number;
+  name: string;
+  starts_at: string;
+  ends_at: string;
+}
+
 interface Camp {
   id: number;
   title: string;
@@ -64,6 +71,14 @@ export const AdminDashboard: React.FC = () => {
   const isAdmin = user?.role === 'admin' || user?.role === 'master_admin';
   const [clubs, setClubs] = useState<ClubUser[]>([]);
   const [camps, setCamps] = useState<Camp[]>([]);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+
+  // Holidays state
+  const [newHolidayName, setNewHolidayName] = useState('');
+  const [newHolidayStart, setNewHolidayStart] = useState('');
+  const [newHolidayEnd, setNewHolidayEnd] = useState('');
+  const [isCreatingHoliday, setIsCreatingHoliday] = useState(false);
+
   const [formData, setFormData] = useState({ email: '', display_name: '', role: 'user', contact_info: '' });
   const [error, setError] = useState('');
   const [editingCampId, setEditingCampId] = useState<number | null>(null);
@@ -106,20 +121,23 @@ export const AdminDashboard: React.FC = () => {
     let cancelled = false;
     const loadDashboard = async () => {
       try {
-        const [clubsData, campsData] = await Promise.all([
+        const [clubsData, campsData, holidaysData] = await Promise.all([
           fetchJsonArray<ClubUser>('/api/admin/users', token),
           fetchJsonArray<Camp>('/api/camps?all=1', token),
+          fetchJsonArray<Holiday>('/api/holidays', token),
         ]);
         if (!cancelled) {
           setError('');
           setClubs(clubsData);
           setCamps(campsData);
+          setHolidays(holidaysData);
         }
       } catch (err) {
         console.error(err);
         if (!cancelled) {
           setClubs([]);
           setCamps([]);
+          setHolidays([]);
           setError(err instanceof Error ? err.message : 'Dashboard-Daten konnten nicht geladen werden');
         }
       }
@@ -262,6 +280,95 @@ export const AdminDashboard: React.FC = () => {
             </button>
           </div>
         </form>
+      </section>
+
+      <section className="list-panel">
+        <div className="section-heading">
+          <h2>Ferien verwalten</h2>
+        </div>
+        <form className="admin-form compact" onSubmit={async (e) => {
+          e.preventDefault();
+          if (!token || isCreatingHoliday) return;
+          setIsCreatingHoliday(true);
+          try {
+            const response = await fetch('/api/admin/holidays', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                name: newHolidayName,
+                starts_at: newHolidayStart,
+                ends_at: newHolidayEnd
+              })
+            });
+            const data = await parseJson(response);
+            if (!response.ok) throw new Error(data?.error || 'Fehler beim Erstellen der Ferien');
+            setNewHolidayName('');
+            setNewHolidayStart('');
+            setNewHolidayEnd('');
+            const updatedHolidays = await fetchJsonArray<Holiday>('/api/holidays', token);
+            setHolidays(updatedHolidays);
+          } catch (err) {
+            console.error(err);
+            setError(err instanceof Error ? err.message : 'Fehler beim Erstellen der Ferien');
+          } finally {
+            setIsCreatingHoliday(false);
+          }
+        }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '1rem', alignItems: 'end' }}>
+            <label className="field">
+              <span>Name (z.B. Sommerferien 2024)</span>
+              <input type="text" value={newHolidayName} onChange={(e) => setNewHolidayName(e.target.value)} required />
+            </label>
+            <label className="field">
+              <span>Startdatum</span>
+              <input type="date" value={newHolidayStart} onChange={(e) => setNewHolidayStart(e.target.value)} required />
+            </label>
+            <label className="field">
+              <span>Enddatum</span>
+              <input type="date" value={newHolidayEnd} onChange={(e) => setNewHolidayEnd(e.target.value)} required />
+            </label>
+            <button className="primary-action" type="submit" disabled={isCreatingHoliday} style={{ marginBottom: '1rem' }}>
+              Speichern
+            </button>
+          </div>
+        </form>
+        {holidays.length === 0 ? (
+          <p className="empty-line">Keine Ferien angelegt.</p>
+        ) : (
+          <ul className="management-list">
+            {holidays.map(holiday => (
+              <li key={holiday.id} className="management-item">
+                <div className="management-main no-thumb">
+                  <div>
+                    <h3>{holiday.name}</h3>
+                    <p>{new Date(holiday.starts_at).toLocaleDateString('de-DE')} - {new Date(holiday.ends_at).toLocaleDateString('de-DE')}</p>
+                  </div>
+                </div>
+                <div className="item-actions">
+                  <button className="danger-action" type="button" onClick={async () => {
+                    if (!token || !confirm('Wirklich löschen?')) return;
+                    try {
+                      const response = await fetch(`/api/admin/holidays/${holiday.id}`, {
+                        method: 'DELETE',
+                        headers: { Authorization: `Bearer ${token}` }
+                      });
+                      if (!response.ok) throw new Error('Fehler beim Löschen');
+                      setHolidays(holidays.filter(h => h.id !== holiday.id));
+                    } catch (err) {
+                      console.error(err);
+                      setError('Fehler beim Löschen der Ferien');
+                    }
+                  }}>
+                    Löschen
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="list-panel">
