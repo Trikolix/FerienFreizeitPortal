@@ -36,6 +36,13 @@ interface SearchMapProps {
   setBounds: (bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number } | null) => void;
 }
 
+const formatDate = (dateStr?: string) => {
+  if (!dateStr) return '';
+  const date = new Date(dateStr.replace(' ', 'T'));
+  if (isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' }).format(date);
+};
+
 export const SearchMap: React.FC<SearchMapProps> = ({ camps, setBounds }) => {
   return (
     <section aria-label="Kartenansicht" className="map-panel">
@@ -48,19 +55,22 @@ export const SearchMap: React.FC<SearchMapProps> = ({ camps, setBounds }) => {
         {camps.filter((camp) => camp.location_lat && camp.location_lng).map((camp) => (
           <Marker key={camp.id} position={[camp.location_lat, camp.location_lng]}>
             <Popup>
-              <strong>{camp.title}</strong>
-              <br />
-              {camp.club_name}
-              <br />
-              {camp.location_text && (
-                <>
-                  {camp.location_text}
-                  <br />
-                </>
+              <strong className="map-popup-title">{camp.title}</strong>
+              <span className="map-popup-line">{camp.club_name}</span>
+              {camp.starts_at && camp.ends_at && (
+                <span className="map-popup-meta">
+                  {formatDate(camp.starts_at)} - {formatDate(camp.ends_at)}
+                </span>
               )}
-              {camp.min_age}-{camp.max_age} Jahre
-              <br />
-              <Link to={`/freizeiten/${camp.id}`}>Details ansehen</Link>
+              {camp.location_text && (
+                <span className="map-popup-line">
+                  {camp.location_text}
+                </span>
+              )}
+              <span className="map-popup-line">{camp.min_age}-{camp.max_age} Jahre</span>
+              <Link to={`/freizeiten/${camp.id}`} className="map-popup-link">
+                Details ansehen
+              </Link>
             </Popup>
           </Marker>
         ))}

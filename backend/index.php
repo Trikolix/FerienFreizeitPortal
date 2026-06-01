@@ -166,11 +166,29 @@ function ensureDefaultUser($db, $email, $username, $password, $role, $displayNam
     $stmt->execute([$email, $username, $hash, $role, $displayName, $displayName, $contactInfo]);
 }
 
+function ensureDefaultHolidays($db) {
+    $defaults = [
+        ['Sommerferien 2026', '2026-07-04 00:00:00', '2026-08-16 23:59:59'],
+        ['Herbstferien 2026', '2026-10-12 00:00:00', '2026-10-25 23:59:59'],
+        ['Weihnachtsferien 2026', '2026-12-23 00:00:00', '2027-01-02 23:59:59'],
+    ];
+
+    foreach ($defaults as $holiday) {
+        $stmt = $db->prepare('SELECT id FROM holidays WHERE name = ?');
+        $stmt->execute([$holiday[0]]);
+        if (!$stmt->fetch()) {
+            $stmt = $db->prepare('INSERT INTO holidays (name, starts_at, ends_at) VALUES (?, ?, ?)');
+            $stmt->execute($holiday);
+        }
+    }
+}
+
 try {
     ensureDefaultUser($db, 'admin@example.test', 'admin', 'admin', 'master_admin', 'Master-Admin');
     ensureDefaultUser($db, 'testverein@example.test', 'testverein', 'testverein', 'user', 'Testverein Westsachsen', 'testverein@example.test');
+    ensureDefaultHolidays($db);
 } catch (PDOException $e) {
-    error_log("Default User Seed Error: " . $e->getMessage());
+    error_log("Default Seed Error: " . $e->getMessage());
 }
 
 // Central logging
@@ -188,7 +206,35 @@ function ensureHolidaysSchema($db, $dbConnection) {
     )");
 }
 
+function ensureCategoriesSchema($db, $dbConnection) {
+    $db->exec("CREATE TABLE IF NOT EXISTS camp_categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        camp_id INTEGER NOT NULL,
+        category TEXT NOT NULL,
+        FOREIGN KEY(camp_id) REFERENCES camps(id) ON DELETE CASCADE
+    )");
+}
+
+ensureCategoriesSchema($db, $dbConnection);
 ensureHolidaysSchema($db, $dbConnection);
+
+function ensureContactEventsSchema($db, $dbConnection) {
+    $idType = $dbConnection === 'pgsql' ? 'SERIAL PRIMARY KEY' : ($dbConnection === 'mysql' ? 'INT AUTO_INCREMENT PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT');
+    $dateType = $dbConnection === 'pgsql' ? 'TIMESTAMP' : 'DATETIME';
+    $db->exec("CREATE TABLE IF NOT EXISTS contact_events (
+        id $idType,
+        request_id VARCHAR(64) NOT NULL,
+        action VARCHAR(32) NOT NULL,
+        reason VARCHAR(64),
+        ip_hash VARCHAR(64) NOT NULL,
+        user_agent TEXT,
+        email_domain VARCHAR(255),
+        message_length INTEGER DEFAULT 0,
+        created_at $dateType DEFAULT CURRENT_TIMESTAMP
+    )");
+}
+
+ensureContactEventsSchema($db, $dbConnection);
 
 function ensureCampColumns($db, $dbConnection) {
     $dateType = $dbConnection === 'pgsql' ? 'TIMESTAMP' : 'DATETIME';
@@ -215,8 +261,8 @@ function ensureCampColumns($db, $dbConnection) {
     try {
         $db->exec('UPDATE camps SET min_age = age_from WHERE min_age IS NULL AND age_from IS NOT NULL');
         $db->exec('UPDATE camps SET max_age = age_to WHERE max_age IS NULL AND age_to IS NOT NULL');
-        $db->exec("UPDATE camps SET status = 'published' WHERE is_active = 1 AND (status IS NULL OR status = 'draft')");
-        $db->exec("UPDATE camps SET status = 'archived' WHERE is_active = 0 AND (status IS NULL OR status = 'draft')");
+        $db->exec("UPDATE camps SET status = 'published' WHERE is_active = 1 AND (status IS NULL OR status = '')");
+        $db->exec("UPDATE camps SET status = 'archived' WHERE is_active = 0 AND (status IS NULL OR status = '')");
     } catch (PDOException $e) {
         // Older compatibility columns are not present on fresh databases.
     }
@@ -290,6 +336,191 @@ function passwordMailHtml($headline, $name, $link, $body) {
         . "<p><a href=\"$safeLink\" style=\"display:inline-block;padding:12px 16px;background:#97c558;color:#1f2a16;text-decoration:none;font-weight:bold\">Passwort festlegen</a></p>"
         . "<p>Falls der Button nicht funktioniert, öffne diesen Link:<br><a href=\"$safeLink\">$safeLink</a></p>"
         . "</body></html>";
+}
+
+function contactConfig($config) {
+    return [
+        'to' => configValue($config, 'CONTACT_TO', getenv('MAIL_FROM') ?: 'kontakt@westsachsen-camps.de'),
+        'subject_prefix' => configValue($config, 'CONTACT_SUBJECT_PREFIX', '[Ferienfreizeitportal]'),
+        'rate_limit_max' => max(1, (int)configValue($config, 'CONTACT_RATE_LIMIT_MAX', 5)),
+        'rate_limit_window_seconds' => max(60, (int)configValue($config, 'CONTACT_RATE_LIMIT_WINDOW_SECONDS', 900)),
+        'min_seconds' => max(1, (int)configValue($config, 'CONTACT_MIN_SECONDS', 3)),
+        'log_salt' => configValue($config, 'CONTACT_LOG_SALT', getenv('APP_KEY') ?: 'ferienfreizeitportal-contact-log'),
+    ];
+}
+
+function contactGenericResponse() {
+    return ['message' => 'Danke, deine Nachricht wurde übermittelt. Wir melden uns bei Bedarf per E-Mail.'];
+}
+
+function normalizeContactPayload($data) {
+    return [
+        'name' => trim((string)($data['name'] ?? '')),
+        'email' => strtolower(trim((string)($data['email'] ?? ''))),
+        'message' => trim((string)($data['message'] ?? '')),
+        'website' => trim((string)($data['website'] ?? '')),
+        'form_started_at' => $data['form_started_at'] ?? null,
+    ];
+}
+
+function contactTextLength($value) {
+    return function_exists('mb_strlen') ? mb_strlen($value) : strlen($value);
+}
+
+function validateContactPayload($payload) {
+    if (contactTextLength($payload['name']) < 2) {
+        return ['field' => 'name', 'message' => 'Bitte gib deinen Namen an.'];
+    }
+    if (contactTextLength($payload['name']) > 120) {
+        return ['field' => 'name', 'message' => 'Der Name ist zu lang.'];
+    }
+    if (!filter_var($payload['email'], FILTER_VALIDATE_EMAIL) || contactTextLength($payload['email']) > 254) {
+        return ['field' => 'email', 'message' => 'Bitte gib eine gültige E-Mail-Adresse an.'];
+    }
+    if (contactTextLength($payload['message']) < 20) {
+        return ['field' => 'message', 'message' => 'Bitte schreibe eine etwas ausführlichere Nachricht.'];
+    }
+    if (contactTextLength($payload['message']) > 4000) {
+        return ['field' => 'message', 'message' => 'Die Nachricht ist zu lang.'];
+    }
+
+    return null;
+}
+
+function clientIpAddress($server) {
+    $candidates = [];
+    if (!empty($server['HTTP_CF_CONNECTING_IP'])) {
+        $candidates[] = $server['HTTP_CF_CONNECTING_IP'];
+    }
+    if (!empty($server['HTTP_X_FORWARDED_FOR'])) {
+        $parts = explode(',', $server['HTTP_X_FORWARDED_FOR']);
+        $candidates[] = trim($parts[0]);
+    }
+    if (!empty($server['REMOTE_ADDR'])) {
+        $candidates[] = $server['REMOTE_ADDR'];
+    }
+
+    foreach ($candidates as $candidate) {
+        if (filter_var($candidate, FILTER_VALIDATE_IP)) {
+            return $candidate;
+        }
+    }
+
+    return '0.0.0.0';
+}
+
+function contactMetadata($payload, $server, $config) {
+    $emailParts = explode('@', $payload['email']);
+    $userAgent = substr((string)($server['HTTP_USER_AGENT'] ?? ''), 0, 255);
+
+    return [
+        'request_id' => bin2hex(random_bytes(12)),
+        'ip_hash' => hash('sha256', clientIpAddress($server) . '|' . $config['log_salt']),
+        'user_agent' => $userAgent,
+        'email_domain' => count($emailParts) === 2 ? substr($emailParts[1], 0, 255) : null,
+        'message_length' => contactTextLength($payload['message']),
+    ];
+}
+
+function logContactEvent($db, $metadata, $action, $reason = null) {
+    try {
+        $stmt = $db->prepare('INSERT INTO contact_events (request_id, action, reason, ip_hash, user_agent, email_domain, message_length) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        $stmt->execute([
+            $metadata['request_id'],
+            $action,
+            $reason,
+            $metadata['ip_hash'],
+            $metadata['user_agent'],
+            $metadata['email_domain'],
+            $metadata['message_length'],
+        ]);
+    } catch (PDOException $e) {
+        logError('Contact event logging failed: ' . $e->getMessage());
+    }
+}
+
+function countRecentContactEvents($db, $ipHash, $windowSeconds) {
+    $since = date('Y-m-d H:i:s', time() - $windowSeconds);
+    $stmt = $db->prepare('SELECT COUNT(*) FROM contact_events WHERE ip_hash = ? AND created_at >= ?');
+    $stmt->execute([$ipHash, $since]);
+    return (int)$stmt->fetchColumn();
+}
+
+function contactAbuseReason($payload, $config, $now = null) {
+    if ($payload['website'] !== '') {
+        return 'honeypot';
+    }
+
+    $startedAt = $payload['form_started_at'];
+    if (!is_numeric($startedAt)) {
+        return 'missing_timer';
+    }
+
+    $startedAt = (float)$startedAt;
+    if ($startedAt > 1000000000000) {
+        $startedAt = $startedAt / 1000;
+    }
+
+    $now = $now ?? time();
+    if (($now - $startedAt) < $config['min_seconds']) {
+        return 'too_fast';
+    }
+
+    $linkCount = preg_match_all('/https?:\/\/|www\.|<a\s/i', $payload['message']);
+    if ($linkCount > 3) {
+        return 'too_many_links';
+    }
+
+    return null;
+}
+
+function contactMailHtml($payload, $requestId) {
+    $safeName = htmlspecialchars($payload['name'], ENT_QUOTES, 'UTF-8');
+    $safeEmail = htmlspecialchars($payload['email'], ENT_QUOTES, 'UTF-8');
+    $safeMessage = nl2br(htmlspecialchars($payload['message'], ENT_QUOTES, 'UTF-8'));
+    $safeRequestId = htmlspecialchars($requestId, ENT_QUOTES, 'UTF-8');
+
+    return "<!doctype html><html lang=\"de\"><head><meta charset=\"UTF-8\"><title>Kontaktanfrage</title></head>"
+        . "<body style=\"font-family:Arial,sans-serif;line-height:1.5;color:#2e2e2e\">"
+        . "<h1>Kontaktanfrage</h1>"
+        . "<p><strong>Name:</strong> $safeName<br><strong>E-Mail:</strong> $safeEmail<br><strong>Request-ID:</strong> $safeRequestId</p>"
+        . "<p><strong>Nachricht:</strong></p><p>$safeMessage</p>"
+        . "</body></html>";
+}
+
+function processContactSubmission($db, $configSource, $data, $server, $mailer = null) {
+    $config = contactConfig($configSource);
+    $payload = normalizeContactPayload(is_array($data) ? $data : []);
+    $metadata = contactMetadata($payload, $server, $config);
+    $abuseReason = contactAbuseReason($payload, $config);
+
+    if ($abuseReason) {
+        logContactEvent($db, $metadata, 'blocked', $abuseReason);
+        return ['status' => 200, 'body' => contactGenericResponse()];
+    }
+
+    $validationError = validateContactPayload($payload);
+    if ($validationError) {
+        logContactEvent($db, $metadata, 'rejected_validation', $validationError['field']);
+        return ['status' => 400, 'body' => ['error' => $validationError['message']]];
+    }
+
+    if (countRecentContactEvents($db, $metadata['ip_hash'], $config['rate_limit_window_seconds']) >= $config['rate_limit_max']) {
+        logContactEvent($db, $metadata, 'blocked', 'rate_limit');
+        return ['status' => 200, 'body' => contactGenericResponse()];
+    }
+
+    logContactEvent($db, $metadata, 'accepted', null);
+
+    $subject = trim($config['subject_prefix'] . ' Kontaktanfrage von ' . $payload['name']);
+    $html = contactMailHtml($payload, $metadata['request_id']);
+    if ($mailer) {
+        $mailer($config['to'], $subject, $html);
+    } else {
+        sendHtmlMail($config['to'], $subject, $html);
+    }
+
+    return ['status' => 200, 'body' => contactGenericResponse()];
 }
 
 function userPayload($user) {
@@ -411,6 +642,24 @@ function saveUploadedCampImages($db, $campId) {
     return $savedImages;
 }
 
+function saveCampCategories($db, $campId, $categories) {
+    if (!is_array($categories)) {
+        if (is_string($categories)) {
+            $categories = array_filter(array_map('trim', explode(',', $categories)));
+        } else {
+            $categories = [];
+        }
+    }
+
+    $db->prepare('DELETE FROM camp_categories WHERE camp_id = ?')->execute([$campId]);
+    $stmt = $db->prepare('INSERT INTO camp_categories (camp_id, category) VALUES (?, ?)');
+    foreach ($categories as $cat) {
+        if (trim($cat) !== '') {
+            $stmt->execute([$campId, trim($cat)]);
+        }
+    }
+}
+
 function validateCampDates($data) {
     $startsAt = !empty($data['starts_at']) ? strtotime($data['starts_at']) : null;
     $endsAt = !empty($data['ends_at']) ? strtotime($data['ends_at']) : null;
@@ -449,6 +698,11 @@ try {
             logError("Failed login attempt for username: $username");
             jsonResponse(['error' => 'Invalid credentials'], 401);
         }
+    }
+    elseif ($requestUri === '/api/contact' && $requestMethod === 'POST') {
+        $data = json_decode(file_get_contents('php://input'), true) ?? [];
+        $result = processContactSubmission($db, $localConfig, $data, $_SERVER);
+        jsonResponse($result['body'], $result['status']);
     }
     elseif ($requestUri === '/api/password/request-reset' && $requestMethod === 'POST') {
         $data = json_decode(file_get_contents('php://input'), true) ?? [];
@@ -568,16 +822,13 @@ try {
             $newCampId = $db->lastInsertId();
 
             saveUploadedCampImages($db, $newCampId);
+            saveCampCategories($db, $newCampId, $data['categories'] ?? $data['type'] ?? []);
 
             jsonResponse(['message' => 'Camp created successfully', 'id' => $newCampId]);
         }
         elseif ($requestMethod === 'PUT' && $campId) {
-            // PHP doesn't parse multipart/form-data for PUT out of the box easily.
-            // A common workaround is to use POST with a _method field, but for simplicity we assume
-            // json if editing without images, or we can just parse php://input.
             $data = json_decode(file_get_contents('php://input'), true) ?? [];
 
-            // Check ownership
             if (!getCampForUser($db, $campId, $user)) {
                 jsonResponse(['error' => 'Forbidden'], 403);
             }
@@ -594,6 +845,8 @@ try {
                 $data['ends_at'] ?? null, $data['price_eur'] ?? null, $data['registration_deadline'] ?? null,
                 $data['status'] ?? 'draft', $campId
             ]);
+
+            saveCampCategories($db, $campId, $data['categories'] ?? $data['type'] ?? []);
 
             jsonResponse(['message' => 'Camp updated successfully']);
         }
@@ -751,6 +1004,9 @@ try {
 
         foreach ($users as &$listedUser) {
             $listedUser['role'] = normalizeRole($listedUser['role']);
+            $countStmt = $db->prepare('SELECT COUNT(*) FROM camps WHERE club_id = ?');
+            $countStmt->execute([$listedUser['id']]);
+            $listedUser['camp_count'] = (int)$countStmt->fetchColumn();
         }
 
         jsonResponse($users);
@@ -777,6 +1033,15 @@ try {
         }
 
         if ($requestMethod === 'DELETE') {
+            $data = json_decode(file_get_contents('php://input'), true) ?? [];
+            $confirmation = strtolower(trim($data['confirm'] ?? ''));
+            $expectedEmail = strtolower(trim($targetUser['email'] ?? ''));
+            $expectedName = strtolower(trim($targetUser['display_name'] ?? ''));
+
+            if ($confirmation === '' || ($confirmation !== $expectedEmail && $confirmation !== $expectedName)) {
+                jsonResponse(['error' => 'Zum Löschen muss die E-Mail-Adresse oder der Name exakt bestätigt werden'], 400);
+            }
+
             $stmt = $db->prepare('DELETE FROM users WHERE id = ?');
             $stmt->execute([$targetId]);
             jsonResponse(['message' => 'Nutzer gelöscht']);
@@ -797,8 +1062,7 @@ try {
     }
     elseif (preg_match('/^\/api\/camps\/(\d+)$/', $requestUri, $matches) && $requestMethod === 'GET') {
         $campId = $matches[1];
-        $query = 'SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id WHERE c.id = ? AND c.status IN ("published", "fully_booked")';
-        $stmt = $db->prepare($query);
+        $stmt = $db->prepare('SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id WHERE c.id = ?');
         $stmt->execute([$campId]);
         $camp = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -810,94 +1074,107 @@ try {
         $stmtImg->execute([$camp['id']]);
         $camp['images'] = $stmtImg->fetchAll(PDO::FETCH_COLUMN);
 
+        $stmtCat = $db->prepare('SELECT category FROM camp_categories WHERE camp_id = ?');
+        $stmtCat->execute([$camp['id']]);
+        $camp['categories'] = $stmtCat->fetchAll(PDO::FETCH_COLUMN);
+        $camp['type'] = !empty($camp['categories']) ? $camp['categories'][0] : $camp['type'];
+
         jsonResponse($camp);
     }
     elseif ($requestUri === '/api/camps' && $requestMethod === 'GET') {
         $query = 'SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id';
         $params = [];
-        $whereAdded = false;
+        $whereConditions = [];
         $currentUser = authenticateUser($db);
 
         if (isset($_GET['club_id'])) {
             $clubId = (int)$_GET['club_id'];
-            $query .= ' WHERE c.club_id = ?';
+            $whereConditions[] = 'c.club_id = ?';
             $params[] = $clubId;
-            $whereAdded = true;
             if (!$currentUser || (!isAdminRole($currentUser) && (int)$currentUser['id'] !== $clubId)) {
-                $query .= ' AND c.status IN ("published", "fully_booked")';
+                $whereConditions[] = 'c.status IN ("published", "fully_booked")';
             }
         } elseif (isset($_GET['all']) && $_GET['all'] == 1) {
             if (!$currentUser || !isAdminRole($currentUser)) {
                 jsonResponse(['error' => 'Forbidden'], 403);
             }
-            $query .= ' WHERE 1=1'; // Admin wants all
-            $whereAdded = true;
         } else {
-            $query .= ' WHERE c.status IN ("published", "fully_booked")';
-            $whereAdded = true;
+            $whereConditions[] = 'c.status IN ("published", "fully_booked")';
         }
 
         if (isset($_GET['age'])) {
             $age = (int)$_GET['age'];
-            $query .= ' AND (c.min_age <= ? AND c.max_age >= ?)';
+            $whereConditions[] = '(c.min_age <= ? AND c.max_age >= ?)';
             $params[] = $age;
             $params[] = $age;
         }
 
-        if (isset($_GET['type']) && is_string($_GET['type']) && trim($_GET['type']) !== '') {
+        if (isset($_GET['types']) && is_string($_GET['types']) && trim($_GET['types']) !== '') {
+            $types = explode(',', $_GET['types']);
+            $types = array_filter(array_map('trim', $types));
+            if (!empty($types)) {
+                $placeholders = implode(',', array_fill(0, count($types), '?'));
+                $whereConditions[] = "c.id IN (SELECT camp_id FROM camp_categories WHERE category IN ($placeholders))";
+                foreach ($types as $t) $params[] = $t;
+            }
+        } elseif (isset($_GET['type']) && is_string($_GET['type']) && trim($_GET['type']) !== '') {
             $type = trim($_GET['type']);
-            $query .= ' AND c.type = ?';
+            $whereConditions[] = "c.id IN (SELECT camp_id FROM camp_categories WHERE category = ?)";
             $params[] = $type;
         }
 
         if (isset($_GET['start_date']) && !empty($_GET['start_date'])) {
-            $query .= ' AND DATE(c.starts_at) >= DATE(?)';
+            $whereConditions[] = 'DATE(c.starts_at) >= DATE(?)';
             $params[] = $_GET['start_date'];
         }
 
         if (isset($_GET['end_date']) && !empty($_GET['end_date'])) {
-            $query .= ' AND DATE(c.ends_at) <= DATE(?)';
+            $whereConditions[] = 'DATE(c.ends_at) <= DATE(?)';
             $params[] = $_GET['end_date'];
         }
 
-        // Basic geographic bounds filtering
         if (isset($_GET['minLat']) && isset($_GET['maxLat']) && isset($_GET['minLng']) && isset($_GET['maxLng'])) {
-            $query .= ' AND (c.location_lat BETWEEN ? AND ? AND c.location_lng BETWEEN ? AND ?)';
+            $whereConditions[] = '(c.location_lat BETWEEN ? AND ? AND c.location_lng BETWEEN ? AND ?)';
             $params[] = (float)$_GET['minLat'];
             $params[] = (float)$_GET['maxLat'];
             $params[] = (float)$_GET['minLng'];
             $params[] = (float)$_GET['maxLng'];
         }
 
+        if (!empty($whereConditions)) {
+            $query .= ' WHERE ' . implode(' AND ', $whereConditions);
+        }
+
         $stmt = $db->prepare($query);
         $stmt->execute($params);
         $camps = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        // Fetch images for camps in batches to avoid N+1 and SQLite variable limits
         $campIds = array_column($camps, 'id');
-        foreach ($camps as &$camp) {
-            $camp['images'] = [];
-        }
-
         if (!empty($campIds)) {
             $chunks = array_chunk($campIds, 900);
             $imagesByCamp = [];
+            $categoriesByCamp = [];
 
             foreach ($chunks as $chunk) {
                 $inQuery = implode(',', array_fill(0, count($chunk), '?'));
+                
                 $stmtImg = $db->prepare("SELECT camp_id, image_url FROM camp_images WHERE camp_id IN ($inQuery)");
                 $stmtImg->execute($chunk);
-                $images = $stmtImg->fetchAll(PDO::FETCH_ASSOC);
-
-                foreach ($images as $img) {
+                foreach ($stmtImg->fetchAll(PDO::FETCH_ASSOC) as $img) {
                     $imagesByCamp[$img['camp_id']][] = $img['image_url'];
+                }
+
+                $stmtCat = $db->prepare("SELECT camp_id, category FROM camp_categories WHERE camp_id IN ($inQuery)");
+                $stmtCat->execute($chunk);
+                foreach ($stmtCat->fetchAll(PDO::FETCH_ASSOC) as $cat) {
+                    $categoriesByCamp[$cat['camp_id']][] = $cat['category'];
                 }
             }
 
             foreach ($camps as &$camp) {
-                if (isset($imagesByCamp[$camp['id']])) {
-                    $camp['images'] = $imagesByCamp[$camp['id']];
-                }
+                $camp['images'] = $imagesByCamp[$camp['id']] ?? [];
+                $camp['categories'] = $categoriesByCamp[$camp['id']] ?? [];
+                $camp['type'] = !empty($camp['categories']) ? $camp['categories'][0] : $camp['type'];
             }
             unset($camp);
         }

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, CalendarClock, CalendarDays, Euro, MapPin, Tag, UsersRound } from 'lucide-react';
+import { ImageGallery } from '../components/ImageGallery';
 
 interface Holiday {
   id: number;
@@ -9,25 +10,26 @@ interface Holiday {
   ends_at: string;
 }
 
-interface CampDetail {
+interface Camp {
   id: number;
   title: string;
   club_name: string;
-  contact_info?: string;
-  username?: string;
   min_age: number;
   max_age: number;
   description: string;
   type: string;
-  location_text?: string;
-  location_lat?: number;
-  location_lng?: number;
-  starts_at?: string;
-  ends_at?: string;
-  price_eur?: number | string;
-  registration_deadline?: string;
+  categories?: string[];
+  location_text: string;
+  location_lat: number;
+  location_lng: number;
+  starts_at: string;
+  ends_at: string;
+  price_eur: number;
+  registration_deadline: string;
   status: 'draft' | 'published' | 'fully_booked' | 'archived';
   images?: string[];
+  contact_info?: string;
+  username?: string;
 }
 
 const formatDateTime = (value?: string) => {
@@ -52,93 +54,49 @@ const formatPrice = (value?: number | string) => {
   }).format(amount);
 };
 
+const getHolidayForCamp = (camp: Camp, holidays: Holiday[]) => holidays.find((holiday) => {
+  if (!camp.starts_at || !camp.ends_at) return false;
+  const campStart = camp.starts_at.split(' ')[0];
+  const campEnd = camp.ends_at.split(' ')[0];
+  const holidayStart = holiday.starts_at.split(' ')[0];
+  const holidayEnd = holiday.ends_at.split(' ')[0];
+  return campStart >= holidayStart && campEnd <= holidayEnd;
+});
+
 export const CampDetailPage: React.FC = () => {
-  const { id } = useParams();
-  const [camp, setCamp] = useState<CampDetail | null>(null);
+  const { id } = useParams<{ id: string }>();
+  const [camp, setCamp] = useState<Camp | null>(null);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const fetchHolidays = async () => {
+    const loadData = async () => {
       try {
-        const response = await fetch('/api/holidays');
-        const data = await response.json();
-        if (!cancelled && Array.isArray(data)) {
-          setHolidays(data);
-        }
+        const [campRes, holidaysRes] = await Promise.all([
+          fetch(`/api/camps/${id}`),
+          fetch('/api/holidays')
+        ]);
+        
+        if (!campRes.ok) throw new Error('Freizeit nicht gefunden');
+        const campData = await campRes.json();
+        const holidaysData = await holidaysRes.json();
+        
+        setCamp(campData);
+        setHolidays(holidaysData);
       } catch (err) {
-        console.error('Error fetching holidays', err);
-      }
-    };
-
-    const fetchCamp = async () => {
-      setIsLoading(true);
-      setError('');
-
-      try {
-        const response = await fetch(`/api/camps/${id}`);
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error || 'Freizeit konnte nicht geladen werden');
-        }
-
-        if (!cancelled) {
-          setCamp(data);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setCamp(null);
-          setError(err instanceof Error ? err.message : 'Freizeit konnte nicht geladen werden');
-        }
+        setError(err instanceof Error ? err.message : 'Fehler beim Laden');
       } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
+        setLoading(false);
       }
     };
-
-    void fetchHolidays();
-    void fetchCamp();
-
-    return () => {
-      cancelled = true;
-    };
+    void loadData();
   }, [id]);
 
-  if (isLoading) {
-    return (
-      <div className="empty-state" role="status">
-        <p>Freizeit wird geladen...</p>
-      </div>
-    );
-  }
+  if (loading) return <div className="empty-state"><h2>Laden...</h2></div>;
+  if (error || !camp) return <div className="empty-state"><h2>{error || 'Freizeit nicht gefunden'}</h2><Link to="/">Zurück zur Suche</Link></div>;
 
-  if (error || !camp) {
-    return (
-      <div className="empty-state">
-        <h1>Freizeit nicht gefunden</h1>
-        <p>{error || 'Diese Freizeit ist nicht verfügbar.'}</p>
-        <Link className="secondary-action" to="/">
-          <ArrowLeft size={17} />
-          Zur Suche
-        </Link>
-      </div>
-    );
-  }
-
-  const hasLocation = camp.location_lat !== undefined && camp.location_lng !== undefined;
-  const isHoliday = holidays.some(h => {
-    if (!camp.starts_at || !camp.ends_at) return false;
-    const campStart = camp.starts_at.split(' ')[0];
-    const campEnd = camp.ends_at.split(' ')[0];
-    const holidayStart = h.starts_at.split(' ')[0];
-    const holidayEnd = h.ends_at.split(' ')[0];
-    return campStart >= holidayStart && campEnd <= holidayEnd;
-  });
+  const holiday = getHolidayForCamp(camp, holidays);
 
   return (
     <article className="camp-detail-page">
@@ -148,29 +106,24 @@ export const CampDetailPage: React.FC = () => {
       </Link>
 
       <section className="detail-hero">
-        {camp.images?.length ? (
-          <img src={camp.images[0]} alt={`Bild zu ${camp.title}`} />
-        ) : (
-          <div className="camp-media-fallback">
-            <MapPin size={42} />
-          </div>
-        )}
+        <ImageGallery images={camp.images} title={camp.title} />
       </section>
 
       <section className="detail-layout">
         <div className="detail-main">
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: '0.5rem' }}>
-            <span className="eyebrow" style={{ marginBottom: 0 }}>{camp.type}</span>
-            {isHoliday && (
-              <span className="status-pill is-live" style={{ marginTop: 0 }}>
-                <CalendarDays size={14} style={{ marginRight: 4 }} /> Ferien
+          <div className="detail-tags">
+            {camp.categories?.map(cat => (
+              <span key={cat} className="camp-type">{cat}</span>
+            )) || <span className="camp-type">{camp.type}</span>}
+            {holiday && (
+              <span className="status-pill is-live">
+                <CalendarDays size={14} /> {holiday.name}
               </span>
             )}
           </div>
-          {camp.status === 'fully_booked' && <span className="status-pill is-muted" style={{ display: 'inline-flex', marginLeft: '1rem', verticalAlign: 'middle', marginBottom: '0.2rem' }}>Ausgebucht</span>}
           <h1>{camp.title}</h1>
           <p className="provider">{camp.club_name}</p>
-          <div className="detail-description" dangerouslySetInnerHTML={{ __html: camp.description || 'Keine Beschreibung hinterlegt.' }} />
+          <div className="detail-description" dangerouslySetInnerHTML={{ __html: camp.description }} />
         </div>
 
         <aside className="detail-sidebar" aria-label="Freizeitdetails">
@@ -212,17 +165,15 @@ export const CampDetailPage: React.FC = () => {
           <div className="detail-fact">
             <Tag size={20} />
             <div>
-              <span>Kategorie</span>
-              <strong>{camp.type || 'Nicht angegeben'}</strong>
+              <span>Kategorien</span>
+              <strong>{camp.categories?.join(', ') || camp.type || 'Nicht angegeben'}</strong>
             </div>
           </div>
           <div className="detail-fact">
             <MapPin size={20} />
             <div>
               <span>Ort</span>
-              <strong>
-                {camp.location_text || (hasLocation ? `${camp.location_lat}, ${camp.location_lng}` : 'Nicht angegeben')}
-              </strong>
+              <strong>{camp.location_text || 'Nicht angegeben'}</strong>
             </div>
           </div>
           <div className="detail-contact">

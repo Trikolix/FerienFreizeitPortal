@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { CalendarDays, Euro, Filter, List, Map, MapPin, Search, Tag, UsersRound } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { CalendarDays, ChevronDown, Euro, Filter, List, Map, MapPin, Search, Tag, UsersRound, RotateCcw } from 'lucide-react';
+import L from 'leaflet';
 import { SearchMap } from '../components/SearchMap';
+import { ImageGallery } from '../components/ImageGallery';
 import { stripHtmlAndTruncate } from '../utils/textUtils';
 
 delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
@@ -19,7 +21,7 @@ interface Holiday {
   ends_at: string;
 }
 
-interface Camp {
+export interface Camp {
   id: number;
   title: string;
   club_name: string;
@@ -27,6 +29,7 @@ interface Camp {
   max_age: number;
   description: string;
   type: string;
+  categories?: string[];
   location_text?: string;
   location_lat: number;
   location_lng: number;
@@ -78,15 +81,36 @@ const isRegistrationClosed = (value?: string) => {
   return Boolean(deadline && deadline < new Date());
 };
 
+const getHolidayForCamp = (camp: Camp, holidays: Holiday[]) => holidays.find((holiday) => {
+  if (!camp.starts_at || !camp.ends_at) return false;
+  const campStart = camp.starts_at.split(' ')[0];
+  const campEnd = camp.ends_at.split(' ')[0];
+  const holidayStart = holiday.starts_at.split(' ')[0];
+  const holidayEnd = holiday.ends_at.split(' ')[0];
+  return campStart >= holidayStart && campEnd <= holidayEnd;
+});
+
 export const SearchPage: React.FC = () => {
   const [camps, setCamps] = useState<Camp[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [ageFilter, setAgeFilter] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [startDateFilter, setStartDateFilter] = useState('');
   const [endDateFilter, setEndDateFilter] = useState('');
   const [bounds, setBounds] = useState<{ minLat: number; maxLat: number; minLng: number; maxLng: number } | null>(null);
+  const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
+  const typeDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (typeDropdownRef.current && !typeDropdownRef.current.contains(event.target as Node)) {
+        setIsTypeDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     const fetchHolidays = async () => {
@@ -105,7 +129,7 @@ export const SearchPage: React.FC = () => {
     const fetchCamps = async () => {
       const params = new URLSearchParams();
       if (ageFilter) params.set('age', ageFilter);
-      if (typeFilter) params.set('type', typeFilter);
+      if (selectedTypes.length > 0) params.set('types', selectedTypes.join(','));
       if (startDateFilter) params.set('start_date', startDateFilter);
       if (endDateFilter) params.set('end_date', endDateFilter);
       if (viewMode === 'map' && bounds) {
@@ -126,144 +150,191 @@ export const SearchPage: React.FC = () => {
     };
 
     fetchCamps();
-  }, [ageFilter, typeFilter, startDateFilter, endDateFilter, bounds, viewMode]);
+  }, [ageFilter, selectedTypes, startDateFilter, endDateFilter, bounds, viewMode]);
 
   const typeOptions = useMemo(() => {
     const fallback = ['Sport', 'Lager', 'Kreativ', 'Bildung', 'Natur'];
-    const fromCamps = Array.from(new Set(camps.map((camp) => camp.type).filter(Boolean)));
+    const fromCamps = Array.from(new Set(camps.flatMap((camp) => camp.categories || [camp.type]).filter(Boolean)));
     return Array.from(new Set([...fallback, ...fromCamps]));
   }, [camps]);
 
+  const hasActiveFilters = ageFilter !== '' || selectedTypes.length > 0 || startDateFilter !== '' || endDateFilter !== '';
+
+  const resetFilters = () => {
+    setAgeFilter('');
+    setSelectedTypes([]);
+    setStartDateFilter('');
+    setEndDateFilter('');
+    const holidaySelect = document.getElementById('holiday-filter') as HTMLSelectElement;
+    if (holidaySelect) holidaySelect.value = '';
+  };
+
+  const toggleType = (type: string) => {
+    setSelectedTypes(prev => 
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    );
+  };
+
   return (
     <div className="search-page">
-      <section className="hero-panel">
-        <div className="hero-copy">
-          <span className="eyebrow">Ferien, Vereine, Orte</span>
-          <h1>Ferienfreizeiten in Westsachsen finden.</h1>
-          <p>
-            Angebote von Jugendvereinen und Trägern mit klaren Terminen, Altersangaben und Teilnahmebeiträgen.
-          </p>
-        </div>
-        <div className="hero-stats" aria-label="Überblick">
-          <div>
-            <strong>{camps.length}</strong>
-            <span>sichtbare Angebote</span>
-          </div>
-          <div>
-            <strong>{typeOptions.length}</strong>
-            <span>Kategorien</span>
-          </div>
-        </div>
-      </section>
-
       <section className="filter-panel" aria-label="Suchfilter">
-        <div className="filter-title">
-          <Filter size={20} />
-          <span>Filter</span>
+        <div className="filter-group-main">
+          <div className="filter-title">
+            <Filter size={20} />
+            <span>Filter</span>
+          </div>
+
+          <label className="field">
+            <span>Alter</span>
+            <div className="input-with-icon">
+              <UsersRound size={18} />
+              <input
+                id="age-filter"
+                type="number"
+                value={ageFilter}
+                onChange={(event) => setAgeFilter(event.target.value)}
+                placeholder="z.B. 12"
+                min="0"
+              />
+            </div>
+          </label>
+
+          <div className="field">
+            <span>Kategorie</span>
+            <div className="multi-select-container" ref={typeDropdownRef}>
+              <div 
+                className="multi-select-trigger" 
+                onClick={() => setIsTypeDropdownOpen(!isTypeDropdownOpen)}
+                aria-haspopup="listbox"
+                aria-expanded={isTypeDropdownOpen}
+              >
+                <div className="multi-select-value">
+                  <Tag size={18} />
+                  <span className={selectedTypes.length ? '' : 'is-placeholder'}>
+                    {selectedTypes.length === 0 ? 'Alle Kategorien' : selectedTypes.join(', ')}
+                  </span>
+                </div>
+                <ChevronDown size={16} />
+              </div>
+              
+              <AnimatePresence>
+                {isTypeDropdownOpen && (
+                  <motion.div 
+                    className="multi-select-dropdown"
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    {typeOptions.map(type => (
+                      <label key={type} className="multi-select-option">
+                        <input 
+                          type="checkbox" 
+                          checked={selectedTypes.includes(type)} 
+                          onChange={() => toggleType(type)}
+                        />
+                        <span>{type}</span>
+                      </label>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+
+          <label className="field">
+            <span>Ferien</span>
+            <div className="input-with-icon">
+              <CalendarDays size={18} />
+              <select
+                id="holiday-filter"
+                aria-label="Ferien auswählen"
+                onChange={(e) => {
+                  const selected = holidays.find(h => h.id.toString() === e.target.value);
+                  if (selected) {
+                    setStartDateFilter(selected.starts_at.split(' ')[0]);
+                    setEndDateFilter(selected.ends_at.split(' ')[0]);
+                  } else {
+                    setStartDateFilter('');
+                    setEndDateFilter('');
+                  }
+                }}
+              >
+                <option value="">Alle Zeiträume</option>
+                {holidays.map((holiday) => (
+                  <option key={holiday.id} value={holiday.id}>{holiday.name}</option>
+                ))}
+              </select>
+            </div>
+          </label>
+
+          <div className="field-row">
+            <label className="field">
+              <span>Zeitraum von</span>
+              <div className="input-with-icon">
+                <CalendarDays size={18} />
+                <input
+                type="date"
+                value={startDateFilter}
+                  onChange={(e) => {
+                    const nextStartDate = e.target.value;
+                    setStartDateFilter(nextStartDate);
+                    if (nextStartDate && endDateFilter && endDateFilter < nextStartDate) {
+                      setEndDateFilter(nextStartDate);
+                    }
+                  }}
+                />
+              </div>
+            </label>
+            <label className="field">
+              <span>bis</span>
+              <div className="input-with-icon">
+                <CalendarDays size={18} />
+                <input
+                  type="date"
+                  value={endDateFilter}
+                  min={startDateFilter}
+                  onChange={(e) => setEndDateFilter(e.target.value)}
+                />
+              </div>
+            </label>
+          </div>
+          {hasActiveFilters && (
+            <button 
+              className="text-button filter-reset" 
+              onClick={resetFilters} 
+            >
+              <RotateCcw size={16} />
+              Filter zurücksetzen
+            </button>
+          )}
         </div>
 
-        <label className="field">
-          <span>Alter</span>
-          <div className="input-with-icon">
-            <UsersRound size={18} />
-            <input
-              id="age-filter"
-              type="number"
-              value={ageFilter}
-              onChange={(event) => setAgeFilter(event.target.value)}
-              placeholder="z.B. 12"
-              min="0"
-            />
-          </div>
-        </label>
-
-        <label className="field">
-          <span>Kategorie</span>
-          <div className="input-with-icon">
-            <Tag size={18} />
-            <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
-              <option value="">Alle Kategorien</option>
-              {typeOptions.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
-          </div>
-        </label>
-
-        <label className="field">
-          <span>Ferien</span>
-          <div className="input-with-icon">
-            <CalendarDays size={18} />
-            <select
-              id="holiday-filter"
-              aria-label="Ferien auswählen"
-              onChange={(e) => {
-                const selected = holidays.find(h => h.id.toString() === e.target.value);
-                if (selected) {
-                  setStartDateFilter(selected.starts_at.split(' ')[0]);
-                  setEndDateFilter(selected.ends_at.split(' ')[0]);
-                } else {
-                  setStartDateFilter('');
-                  setEndDateFilter('');
-                }
+        <div className="view-mode-field">
+          <span className="view-mode-label">Ansicht</span>
+          <div className="segmented-control" role="group" aria-label="Darstellung wählen">
+            <button
+              type="button"
+              className={viewMode === 'list' ? 'is-active' : ''}
+              onClick={() => {
+                setViewMode('list');
+                setBounds(null);
               }}
+              aria-pressed={viewMode === 'list'}
             >
-              <option value="">Alle Zeiträume</option>
-              {holidays.map((holiday) => (
-                <option key={holiday.id} value={holiday.id}>{holiday.name}</option>
-              ))}
-            </select>
+              <List size={18} />
+              Liste
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'map' ? 'is-active' : ''}
+              onClick={() => setViewMode('map')}
+              aria-pressed={viewMode === 'map'}
+            >
+              <Map size={18} />
+              Karte
+            </button>
           </div>
-        </label>
-
-        <label className="field">
-          <span>Startdatum</span>
-          <div className="input-with-icon">
-            <CalendarDays size={18} />
-            <input
-              type="date"
-              value={startDateFilter}
-              onChange={(e) => setStartDateFilter(e.target.value)}
-            />
-          </div>
-        </label>
-
-        <label className="field">
-          <span>Enddatum</span>
-          <div className="input-with-icon">
-            <CalendarDays size={18} />
-            <input
-              type="date"
-              value={endDateFilter}
-              onChange={(e) => setEndDateFilter(e.target.value)}
-            />
-          </div>
-        </label>
-
-        <div className="segmented-control" role="group" aria-label="Darstellung wählen">
-          <button
-            type="button"
-            className={viewMode === 'list' ? 'is-active' : ''}
-            onClick={() => {
-              setViewMode('list');
-              setBounds(null);
-            }}
-            aria-pressed={viewMode === 'list'}
-          >
-            <List size={18} />
-            Liste
-          </button>
-          <button
-            type="button"
-            className={viewMode === 'map' ? 'is-active' : ''}
-            onClick={() => setViewMode('map')}
-            aria-pressed={viewMode === 'map'}
-          >
-            <Map size={18} />
-            Karte
-          </button>
         </div>
       </section>
 
@@ -285,46 +356,36 @@ export const SearchPage: React.FC = () => {
                 show: { opacity: 1, transition: { staggerChildren: 0.07 } },
               }}
             >
-              {camps.map((camp) => (
-                <motion.li
-                  variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0 } }}
-                  key={camp.id}
-                  className="camp-card"
-                  whileHover={{ y: -4, transition: { duration: 0.18 } }}
-                >
-                  <Link className="camp-card-link" to={`/freizeiten/${camp.id}`}>
+              {camps.map((camp) => {
+                const holiday = getHolidayForCamp(camp, holidays);
+                return (
+                  <motion.li
+                    variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0 } }}
+                    key={camp.id}
+                    className="camp-card"
+                    whileHover={{ y: -4, transition: { duration: 0.18 } }}
+                  >
                     <div className="camp-media">
-                      {camp.images?.length ? (
-                        <img src={camp.images[0]} alt="" />
-                      ) : (
-                        <div className="camp-media-fallback">
-                          <MapPin size={30} />
-                        </div>
-                      )}
-                      <div style={{ position: 'absolute', top: 12, left: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        <span className="camp-type" style={{ position: 'static' }}>{camp.type}</span>
-                        {holidays.some(h => {
-                            if (!camp.starts_at || !camp.ends_at) return false;
-                            const campStart = camp.starts_at.split(' ')[0];
-                            const campEnd = camp.ends_at.split(' ')[0];
-                            const holidayStart = h.starts_at.split(' ')[0];
-                            const holidayEnd = h.ends_at.split(' ')[0];
-                            return campStart >= holidayStart && campEnd <= holidayEnd;
-                        }) && (
-                          <span className="status-pill is-live" style={{ marginTop: 0 }}>
-                            <CalendarDays size={14} style={{ marginRight: 4 }} /> Ferien
+                      <ImageGallery images={camp.images} title={camp.title} />
+                      <div className="camp-badges">
+                        {camp.categories?.map(cat => (
+                          <span key={cat} className="camp-type">{cat}</span>
+                        )) || <span className="camp-type">{camp.type}</span>}
+                        {holiday && (
+                          <span className="status-pill is-live badge-pill">
+                            <CalendarDays size={14} /> {holiday.name}
                           </span>
                         )}
                       </div>
                     </div>
-                    <div className="camp-body">
+                    <Link className="camp-body" to={`/freizeiten/${camp.id}`}>
                       <div>
                         <h2>{camp.title}</h2>
                         <p className="provider">{camp.club_name}</p>
                       </div>
                       <div className="camp-meta">
                         {camp.status === 'fully_booked' && (
-                          <span className="status-pill is-muted" style={{ marginRight: '0.5rem' }}>Ausgebucht</span>
+                          <span className="status-pill is-muted badge-pill">Ausgebucht</span>
                         )}
                         <span>
                           <UsersRound size={16} />
@@ -341,10 +402,19 @@ export const SearchPage: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <p className="camp-description">
-                        {stripHtmlAndTruncate(camp.description)}{' '}
-                        <span className="text-button" style={{ fontSize: '0.875rem' }}>weiterlesen</span>
-                      </p>
+                      <div className="camp-description-container">
+                        <p className="camp-description">
+                          {(() => {
+                            const { text, truncated } = stripHtmlAndTruncate(camp.description);
+                            return (
+                              <>
+                                {text}{' '}
+                                {truncated && <span className="read-more-link">weiterlesen</span>}
+                              </>
+                            );
+                          })()}
+                        </p>
+                      </div>
                       <div className="camp-footer">
                         <span>
                           <Euro size={16} />
@@ -352,10 +422,10 @@ export const SearchPage: React.FC = () => {
                         </span>
                         {isRegistrationClosed(camp.registration_deadline) && <span className="is-warning">Anmeldeschluss vorbei</span>}
                       </div>
-                    </div>
-                  </Link>
-                </motion.li>
-              ))}
+                    </Link>
+                  </motion.li>
+                );
+              })}
             </motion.ul>
           )}
         </section>

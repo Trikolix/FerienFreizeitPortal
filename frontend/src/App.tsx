@@ -10,6 +10,7 @@ import { CampDetailPage } from './pages/CampDetailPage';
 import { AccountSettingsPage } from './pages/AccountSettingsPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { SetPasswordPage } from './pages/SetPasswordPage';
+import { ContactPage } from './pages/ContactPage';
 import './index.css';
 
 export const App: React.FC = () => {
@@ -22,6 +23,7 @@ export const App: React.FC = () => {
           <Route path="login" element={<LoginPage />} />
           <Route path="passwort-vergessen" element={<ForgotPasswordPage />} />
           <Route path="passwort-setzen" element={<SetPasswordPage />} />
+          <Route path="kontakt" element={<ContactPage />} />
           <Route path="dashboard" element={<ClubDashboard />} />
           <Route path="admin" element={<AdminDashboard />} />
           <Route path="einstellungen" element={<AccountSettingsPage />} />

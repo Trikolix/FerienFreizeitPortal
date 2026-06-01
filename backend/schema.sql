@@ -50,6 +50,13 @@ CREATE TABLE IF NOT EXISTS camps (
     FOREIGN KEY(club_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS camp_categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    camp_id INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    FOREIGN KEY(camp_id) REFERENCES camps(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS camp_images (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     camp_id INTEGER NOT NULL,
@@ -62,4 +69,16 @@ CREATE TABLE IF NOT EXISTS holidays (
     name TEXT NOT NULL,
     starts_at DATETIME NOT NULL,
     ends_at DATETIME NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS contact_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id VARCHAR(64) NOT NULL,
+    action VARCHAR(32) NOT NULL,
+    reason VARCHAR(64),
+    ip_hash VARCHAR(64) NOT NULL,
+    user_agent TEXT,
+    email_domain VARCHAR(255),
+    message_length INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

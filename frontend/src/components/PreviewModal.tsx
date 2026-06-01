@@ -1,8 +1,24 @@
 import React from 'react';
 import { CalendarClock, CalendarDays, Euro, MapPin, Tag, UsersRound, X } from 'lucide-react';
+import { ImageGallery } from './ImageGallery';
 
 interface PreviewModalProps {
-  camp: any;
+  camp: Partial<{
+    title: string;
+    min_age: number;
+    max_age: number;
+    description: string;
+    type: string;
+    categories: string[];
+    location_text: string;
+    location_lat: number;
+    location_lng: number;
+    starts_at: string;
+    ends_at: string;
+    price_eur: number | string;
+    registration_deadline: string;
+    images: string[];
+  }>;
   onClose: () => void;
   clubName?: string;
   contactInfo?: string;
@@ -32,38 +48,22 @@ const formatPrice = (value?: number | string) => {
 
 export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubName, contactInfo }) => {
   const hasLocation = camp.location_lat !== undefined && camp.location_lng !== undefined;
-  // Use existing images, or selected files if provided (we'll implement this later, for now just existing images)
-  const previewImageUrl = camp.images?.length ? camp.images[0] : null;
 
   return (
-    <div className="modal-overlay" onClick={onClose} style={{
-      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1000,
-      display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '2rem'
-    }}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{
-        backgroundColor: 'var(--background)', borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: '1000px',
-        maxHeight: '90vh', overflowY: 'auto', position: 'relative'
-      }}>
-        <button onClick={onClose} style={{
-          position: 'absolute', top: '1rem', right: '1rem', background: 'none', border: 'none', cursor: 'pointer', zIndex: 10
-        }} aria-label="Schließen">
-          <X size={24} color="white" style={{ background: 'rgba(0,0,0,0.5)', borderRadius: '50%', padding: '4px' }} />
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <button className="modal-close" onClick={onClose} aria-label="Schließen">
+          <X size={22} />
         </button>
 
-        <article className="camp-detail-page" style={{ padding: '0', margin: '0', maxWidth: 'none' }}>
-          <section className="detail-hero" style={{ marginTop: '0', borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0' }}>
-            {previewImageUrl ? (
-              <img src={previewImageUrl} alt={`Vorschau Bild`} />
-            ) : (
-              <div className="camp-media-fallback">
-                <MapPin size={42} />
-              </div>
-            )}
+        <article className="camp-detail-page preview-detail">
+          <section className="detail-hero preview-hero">
+            <ImageGallery images={camp.images} title={camp.title} />
           </section>
 
-          <section className="detail-layout" style={{ padding: '2rem' }}>
+          <section className="detail-layout preview-layout">
             <div className="detail-main">
-              <span className="eyebrow">{camp.type || 'Kategorie'}</span>
+              <span className="eyebrow">{camp.categories?.join(', ') || camp.type || 'Kategorie'}</span>
               <h1>{camp.title || 'Titel der Freizeit'}</h1>
               <p className="provider">{clubName}</p>
               <div className="detail-description" dangerouslySetInnerHTML={{ __html: camp.description || 'Keine Beschreibung hinterlegt.' }} />
@@ -108,8 +108,8 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubN
               <div className="detail-fact">
                 <Tag size={20} />
                 <div>
-                  <span>Kategorie</span>
-                  <strong>{camp.type || 'Nicht angegeben'}</strong>
+                  <span>Kategorien</span>
+                  <strong>{camp.categories?.join(', ') || camp.type || 'Nicht angegeben'}</strong>
                 </div>
               </div>
               <div className="detail-fact">

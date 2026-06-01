@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, ImagePlus, Pencil, Plus, Trash2, XCircle, Eye } from 'lucide-react';
-import ReactQuill from 'react-quill';
-import 'react-quill/dist/quill.snow.css';
+import { CheckCircle2, ImagePlus, Pencil, Plus, Trash2, XCircle, Eye, Tag, ChevronDown } from 'lucide-react';
+import ReactQuill from 'react-quill-new';
+import 'react-quill-new/dist/quill.snow.css';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '../store/authStore';
 import { PreviewModal } from '../components/PreviewModal';
+import { MapPicker } from '../components/MapPicker';
 
 interface Camp {
   id: number;
@@ -13,6 +15,7 @@ interface Camp {
   max_age: number;
   description: string;
   type: string;
+  categories?: string[];
   location_text: string;
   location_lat: number;
   location_lng: number;
@@ -41,6 +44,25 @@ export const ClubDashboard: React.FC = () => {
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const [formError, setFormError] = useState('');
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  
+  const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
+  const typeDropdownRef = useRef<HTMLDivElement>(null);
+
+  const typeOptions = useMemo(() => {
+    const base = ['Sport', 'Lager', 'Kreativ', 'Bildung', 'Natur'];
+    const existing = Array.from(new Set(camps.flatMap(c => c.categories || [c.type]).filter(Boolean)));
+    return Array.from(new Set([...base, ...existing]));
+  }, [camps]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (typeDropdownRef.current && !typeDropdownRef.current.contains(event.target as Node)) {
+        setIsTypeDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const fetchCamps = async () => {
     try {
@@ -109,6 +131,9 @@ export const ClubDashboard: React.FC = () => {
   const handleSubmit = async (event?: React.FormEvent, statusOverride?: 'draft' | 'published') => {
     if (event) event.preventDefault();
     setFormError('');
+    const submitter = (event?.nativeEvent as SubmitEvent | undefined)?.submitter as HTMLButtonElement | null | undefined;
+    const submittedStatus = submitter?.name === 'status' ? submitter.value as 'draft' | 'published' : undefined;
+    const requestedStatus = statusOverride ?? submittedStatus;
 
     const validationError = validateDates();
     if (validationError) {
@@ -125,15 +150,16 @@ export const ClubDashboard: React.FC = () => {
         Authorization: `Bearer ${token}`,
       };
 
-      const finalData = { ...formData };
-      if (statusOverride) {
-        finalData.status = statusOverride;
-      }
+      const finalData = { ...formData, status: requestedStatus ?? formData.status ?? 'draft' };
 
       if (!isEditing && selectedFiles?.length) {
         const formDataObj = new FormData();
         Object.entries(finalData).forEach(([key, value]) => {
-          if (value !== undefined) formDataObj.append(key, String(value));
+          if (key === 'categories' && Array.isArray(value)) {
+            value.forEach(v => formDataObj.append('categories[]', v));
+          } else if (value !== undefined) {
+            formDataObj.append(key, String(value));
+          }
         });
         Array.from(selectedFiles).forEach((file) => formDataObj.append('images[]', file));
         reqBody = formDataObj;
@@ -252,6 +278,12 @@ export const ClubDashboard: React.FC = () => {
     return date ? date < new Date() : false;
   };
 
+  const toggleCategory = (cat: string) => {
+    const current = formData.categories || [];
+    const updated = current.includes(cat) ? current.filter(c => c !== cat) : [...current, cat];
+    setFormData({ ...formData, categories: updated });
+  };
+
   return (
     <div className="dashboard-page">
       <section className="page-heading">
@@ -276,10 +308,48 @@ export const ClubDashboard: React.FC = () => {
             <span>Titel</span>
             <input type="text" value={formData.title || ''} onChange={(event) => setFormData({ ...formData, title: event.target.value })} required />
           </label>
-          <label className="field">
-            <span>Art</span>
-            <input type="text" value={formData.type || ''} onChange={(event) => setFormData({ ...formData, type: event.target.value })} required />
-          </label>
+          
+          <div className="field">
+            <span>Kategorien</span>
+            <div className="multi-select-container" ref={typeDropdownRef}>
+              <div 
+                className="multi-select-trigger" 
+                onClick={() => setIsTypeDropdownOpen(!isTypeDropdownOpen)}
+              >
+                <div className="multi-select-value">
+                  <Tag size={18} />
+                  <span className={formData.categories?.length ? '' : 'is-placeholder'}>
+                    {formData.categories?.length ? formData.categories.join(', ') : 'Kategorien wählen'}
+                  </span>
+                </div>
+                <ChevronDown size={16} />
+              </div>
+              
+              <AnimatePresence>
+                {isTypeDropdownOpen && (
+                  <motion.div 
+                    className="multi-select-dropdown"
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    {typeOptions.map(type => (
+                      <label key={type} className="multi-select-option">
+                        <input 
+                          type="checkbox" 
+                          checked={formData.categories?.includes(type)} 
+                          onChange={() => toggleCategory(type)}
+                        />
+                        <span>{type}</span>
+                      </label>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+
           <label className="field">
             <span>Mindestalter</span>
             <input type="number" min="0" value={formData.min_age ?? ''} onChange={(event) => setFormData({ ...formData, min_age: event.target.value === '' ? undefined : Number(event.target.value) })} required />
@@ -324,6 +394,14 @@ export const ClubDashboard: React.FC = () => {
             <span>Longitude für Karte</span>
             <input type="number" step="any" value={formData.location_lng ?? ''} onChange={(event) => setFormData({ ...formData, location_lng: event.target.value === '' ? undefined : Number(event.target.value) })} />
           </label>
+          <div className="field field-wide">
+            <span>Position auf Karte wählen</span>
+            <MapPicker
+              lat={formData.location_lat}
+              lng={formData.location_lng}
+              onChange={(lat, lng) => setFormData({ ...formData, location_lat: lat, location_lng: lng })}
+            />
+          </div>
           {isEditing && Boolean(formData.images?.length) && (
             <div className="field field-wide">
               <span>Vorhandene Bilder</span>
@@ -351,10 +429,10 @@ export const ClubDashboard: React.FC = () => {
           <div className="form-actions">
             {!isEditing ? (
               <>
-                <button className="secondary-action" type="button" onClick={() => handleSubmit(undefined, 'draft')}>
+                <button className="secondary-action" type="submit" name="status" value="draft">
                    Als Entwurf speichern
                 </button>
-                <button className="primary-action" type="button" onClick={() => handleSubmit(undefined, 'published')} disabled={isPastStart(formData.starts_at)}>
+                <button className="primary-action" type="submit" name="status" value="published" disabled={isPastStart(formData.starts_at)}>
                    <Plus size={18} />
                    Veröffentlichen
                 </button>
@@ -407,7 +485,7 @@ export const ClubDashboard: React.FC = () => {
                   {camp.images?.length ? <img src={camp.images[0]} alt={`Bild zu ${camp.title}`} /> : <span className="thumb-placeholder"><ImagePlus size={22} /></span>}
                   <div>
                     <h3>{camp.title}</h3>
-                    <p>{camp.type} · {camp.location_text || 'Ort offen'} · {camp.min_age}-{camp.max_age} Jahre</p>
+                    <p>{camp.categories?.join(', ') || camp.type} · {camp.location_text || 'Ort offen'} · {camp.min_age}-{camp.max_age} Jahre</p>
                     <span className={`status-pill ${camp.status === 'published' ? 'is-live' : 'is-muted'}`}>
                       {camp.status === 'published' ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
                       {getStatusLabel(camp.status)}
