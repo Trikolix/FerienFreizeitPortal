@@ -40,6 +40,16 @@ const formatCampDate = (value?: string) => {
   return date ? new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date) : 'Termin offen';
 };
 
+const getFormSnapshot = (data: Partial<Camp>) => {
+  const { description, ...remainingData } = data;
+  const descriptionText = (description || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+
+  return JSON.stringify({
+    ...remainingData,
+    ...(descriptionText ? { description } : {}),
+  });
+};
+
 export const ClubDashboard: React.FC = () => {
   const { user, token } = useAuthStore();
   const navigate = useNavigate();
@@ -52,6 +62,9 @@ export const ClubDashboard: React.FC = () => {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [activeEditorSection, setActiveEditorSection] = useState<'basics' | 'schedule' | 'location' | 'images'>('basics');
   const [campToDelete, setCampToDelete] = useState<Camp | null>(null);
+  const [initialFormData, setInitialFormData] = useState('{}');
+  const [isDiscardDialogOpen, setIsDiscardDialogOpen] = useState(false);
+  const [discardAction, setDiscardAction] = useState<'close' | 'create'>('close');
   
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
   const typeDropdownRef = useRef<HTMLDivElement>(null);
@@ -201,6 +214,7 @@ export const ClubDashboard: React.FC = () => {
 
       setIsEditing(false);
       setIsEditorOpen(false);
+      setInitialFormData('{}');
       setFormData({});
       setSelectedFiles(null);
       fetchCamps();
@@ -226,17 +240,19 @@ export const ClubDashboard: React.FC = () => {
     setFormData(camp);
     setIsEditing(true);
     setIsEditorOpen(true);
+    setInitialFormData(getFormSnapshot(camp));
     setActiveEditorSection('basics');
     setSelectedFiles(null);
     setFormError('');
   };
 
-  const startCreate = () => {
+  const openCreateEditor = () => {
     setFormData({});
     setIsEditing(false);
     setSelectedFiles(null);
     setFormError('');
     setActiveEditorSection('basics');
+    setInitialFormData('{}');
     setIsEditorOpen(true);
   };
 
@@ -246,6 +262,36 @@ export const ClubDashboard: React.FC = () => {
     setFormData({});
     setSelectedFiles(null);
     setFormError('');
+    setInitialFormData('{}');
+  };
+
+  const isFormDirty = isEditorOpen && (Boolean(selectedFiles?.length) || getFormSnapshot(formData) !== initialFormData);
+
+  const requestCloseEditor = () => {
+    if (isFormDirty) {
+      setDiscardAction('close');
+      setIsDiscardDialogOpen(true);
+      return;
+    }
+    closeEditor();
+  };
+
+  const requestCreateEditor = () => {
+    if (isFormDirty) {
+      setDiscardAction('create');
+      setIsDiscardDialogOpen(true);
+      return;
+    }
+    openCreateEditor();
+  };
+
+  const discardUnsavedChanges = () => {
+    setIsDiscardDialogOpen(false);
+    if (discardAction === 'create') {
+      openCreateEditor();
+    } else {
+      closeEditor();
+    }
   };
 
   const handleDeleteImage = async (campId: number, imageUrl: string) => {
@@ -315,6 +361,33 @@ export const ClubDashboard: React.FC = () => {
   const publishedCamps = camps.filter((camp) => camp.status === 'published').length;
   const draftCamps = camps.filter((camp) => camp.status === 'draft').length;
 
+  useEffect(() => {
+    if (!isFormDirty) return;
+
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    const warnBeforeNavigation = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const link = target?.closest<HTMLAnchorElement>('a[href]');
+      if (!link || link.target === '_blank' || link.hasAttribute('download')) return;
+
+      if (!window.confirm('Du hast ungespeicherte Änderungen. Möchtest du diese Seite wirklich verlassen?')) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    document.addEventListener('click', warnBeforeNavigation, true);
+    return () => {
+      window.removeEventListener('beforeunload', warnBeforeUnload);
+      document.removeEventListener('click', warnBeforeNavigation, true);
+    };
+  }, [isFormDirty]);
+
   return (
     <div className="dashboard-page">
       <section className="dashboard-hero">
@@ -323,7 +396,7 @@ export const ClubDashboard: React.FC = () => {
           <h1>Meine Freizeiten</h1>
           <p>Verwalte deine Angebote und behalte ihre Sichtbarkeit im Blick.</p>
         </div>
-        <button className="primary-action dashboard-create-action" type="button" onClick={startCreate}>
+        <button className="primary-action dashboard-create-action" type="button" onClick={requestCreateEditor}>
           <Plus size={18} />
           Freizeit anlegen
         </button>
@@ -342,7 +415,7 @@ export const ClubDashboard: React.FC = () => {
             <span className="eyebrow">{isEditing ? 'Bearbeiten' : 'Neue Freizeit'}</span>
             <h2>{isEditing ? formData.title || 'Freizeit bearbeiten' : 'Freizeit anlegen'}</h2>
           </div>
-          <button className="editor-close-button" type="button" onClick={closeEditor} aria-label="Editor schließen">×</button>
+          <button className="editor-close-button" type="button" onClick={requestCloseEditor} aria-label="Editor schließen">×</button>
         </div>
         {formError && (
           <p className="alert" id="camp-form-error" role="alert">
@@ -528,7 +601,7 @@ export const ClubDashboard: React.FC = () => {
                   <CheckCircle2 size={18} />
                   Speichern
                 </button>
-                <button className="secondary-action" type="button" onClick={closeEditor}>
+                <button className="secondary-action" type="button" onClick={requestCloseEditor}>
                   Abbrechen
                 </button>
                 <button className="secondary-action" type="button" onClick={() => setIsPreviewOpen(true)} title="Vorschau" aria-label="Vorschau">
@@ -560,7 +633,7 @@ export const ClubDashboard: React.FC = () => {
             <ImagePlus size={32} />
             <h3>Noch keine Freizeit angelegt</h3>
             <p>Lege dein erstes Angebot an und mache es für Familien sichtbar.</p>
-            <button className="primary-action" type="button" onClick={startCreate}><Plus size={18} /> Freizeit anlegen</button>
+            <button className="primary-action" type="button" onClick={requestCreateEditor}><Plus size={18} /> Freizeit anlegen</button>
           </div>
         ) : (
           <ul className="management-list">
@@ -614,6 +687,20 @@ export const ClubDashboard: React.FC = () => {
             <div>
               <button className="secondary-action" type="button" onClick={() => setCampToDelete(null)}>Abbrechen</button>
               <button className="danger-action" type="button" onClick={() => { void handleDelete(campToDelete.id); setCampToDelete(null); }}><Trash2 size={17} /> Löschen</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isDiscardDialogOpen && (
+        <div className="delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="discard-changes-title">
+          <div className="delete-dialog-backdrop" />
+          <div className="delete-dialog-content">
+            <h2 id="discard-changes-title">Ungespeicherte Änderungen verwerfen?</h2>
+            <p>Deine Eingaben gehen verloren, wenn du den Editor jetzt verlässt.</p>
+            <div>
+              <button className="secondary-action" type="button" onClick={() => setIsDiscardDialogOpen(false)}>Weiter bearbeiten</button>
+              <button className="danger-action" type="button" onClick={discardUnsavedChanges}>Änderungen verwerfen</button>
             </div>
           </div>
         </div>
