@@ -22,6 +22,7 @@ services:
       - DB_NAME=westsachsen_camps
       - DB_USER=campuser
       - DB_PASSWORD=camppassword
+      - SEED_DEMO_DATA=1
     volumes:
       - ./backend:/var/www/html
     depends_on:

@@ -2913,7 +2913,7 @@ textarea:focus {
 
 .dashboard-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   overflow: hidden;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
@@ -2941,6 +2941,47 @@ textarea:focus {
   color: var(--text-color-muted);
   font-size: 0.8rem;
   font-weight: 700;
+}
+
+.camp-view-tabs {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  background: var(--bg-elevated);
+}
+
+.camp-view-tabs button {
+  min-height: 36px;
+  border-radius: calc(var(--radius-sm) - 3px);
+  padding: 0 0.7rem;
+  color: var(--text-color-muted);
+  background: transparent;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.camp-view-tabs button span {
+  margin-left: 0.2rem;
+  color: inherit;
+  font-size: inherit;
+}
+
+.camp-view-tabs button.is-active {
+  color: var(--primary-text-color);
+  background: var(--bg-soft);
+}
+
+.status-pill.is-past {
+  color: #765700;
+  background: #f7efd3;
+}
+
+.status-pill.is-ongoing {
+  color: #1c6282;
+  background: #e4f2f7;
 }
 
 .camp-editor {
@@ -3179,6 +3220,18 @@ textarea:focus {
     padding: 0.85rem 0.7rem;
   }
 
+  .dashboard-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-summary div:nth-child(odd) {
+    border-left: 0;
+  }
+
+  .dashboard-summary div:nth-child(n + 3) {
+    border-top: 1px solid var(--border-color);
+  }
+
   .dashboard-summary strong {
     font-size: 1.3rem;
   }
@@ -3224,6 +3277,22 @@ textarea:focus {
 
   .management-edit-action {
     flex: 1;
+  }
+
+  .camp-view-tabs {
+    width: 100%;
+  }
+
+  .camp-view-tabs button {
+    flex: 1;
+  }
+
+  .camp-list-heading {
+    display: grid;
+  }
+
+  .management-copy-action {
+    width: 100%;
   }
 
   .delete-dialog-content > div {

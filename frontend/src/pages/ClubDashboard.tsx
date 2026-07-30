@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, ImagePlus, Pencil, Plus, Trash2, XCircle, Eye, Tag, ChevronDown, CalendarDays, MapPin, MoreHorizontal } from 'lucide-react';
+import { CheckCircle2, Copy, ImagePlus, Pencil, Plus, Trash2, XCircle, Eye, Tag, ChevronDown, CalendarDays, MapPin, MoreHorizontal, PlayCircle } from 'lucide-react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -24,6 +24,7 @@ interface Camp {
   price_eur: number;
   registration_deadline: string;
   status: 'draft' | 'published' | 'fully_booked' | 'archived';
+  lifecycle_state?: 'upcoming' | 'ongoing' | 'past';
   images?: string[];
 }
 
@@ -65,6 +66,9 @@ export const ClubDashboard: React.FC = () => {
   const [initialFormData, setInitialFormData] = useState('{}');
   const [isDiscardDialogOpen, setIsDiscardDialogOpen] = useState(false);
   const [discardAction, setDiscardAction] = useState<'close' | 'create'>('close');
+  const [activeCampView, setActiveCampView] = useState<'current' | 'past'>('current');
+  const [formNotice, setFormNotice] = useState('');
+  const [dashboardError, setDashboardError] = useState('');
   
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
   const typeDropdownRef = useRef<HTMLDivElement>(null);
@@ -217,6 +221,7 @@ export const ClubDashboard: React.FC = () => {
       setInitialFormData('{}');
       setFormData({});
       setSelectedFiles(null);
+      setFormNotice('');
       fetchCamps();
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'Freizeit konnte nicht gespeichert werden');
@@ -244,6 +249,7 @@ export const ClubDashboard: React.FC = () => {
     setActiveEditorSection('basics');
     setSelectedFiles(null);
     setFormError('');
+    setFormNotice('');
   };
 
   const openCreateEditor = () => {
@@ -251,6 +257,7 @@ export const ClubDashboard: React.FC = () => {
     setIsEditing(false);
     setSelectedFiles(null);
     setFormError('');
+    setFormNotice('');
     setActiveEditorSection('basics');
     setInitialFormData('{}');
     setIsEditorOpen(true);
@@ -262,7 +269,38 @@ export const ClubDashboard: React.FC = () => {
     setFormData({});
     setSelectedFiles(null);
     setFormError('');
+    setFormNotice('');
     setInitialFormData('{}');
+  };
+
+  const handleDuplicate = async (camp: Camp) => {
+    setDashboardError('');
+
+    try {
+      const response = await fetch(`/api/camps/${camp.id}/duplicate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+
+      if (!response.ok || !data.camp) {
+        throw new Error(data.error || 'Kopie konnte nicht angelegt werden');
+      }
+
+      const copiedCamp = data.camp as Camp;
+      setCamps((current) => [copiedCamp, ...current]);
+      setFormData(copiedCamp);
+      setIsEditing(true);
+      setIsEditorOpen(true);
+      setInitialFormData(getFormSnapshot(copiedCamp));
+      setSelectedFiles(null);
+      setFormError('');
+      setFormNotice('Kopie angelegt. Ergänze Termin, Preis und Anmeldeschluss, bevor du sie veröffentlichst.');
+      setActiveEditorSection('schedule');
+      requestAnimationFrame(() => document.querySelector('.camp-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    } catch (error) {
+      setDashboardError(error instanceof Error ? error.message : 'Kopie konnte nicht angelegt werden');
+    }
   };
 
   const isFormDirty = isEditorOpen && (Boolean(selectedFiles?.length) || getFormSnapshot(formData) !== initialFormData);
@@ -346,6 +384,14 @@ export const ClubDashboard: React.FC = () => {
     }
   };
 
+  const getLifecycleLabel = (lifecycleState?: Camp['lifecycle_state']) => {
+    switch (lifecycleState) {
+      case 'ongoing': return 'Läuft gerade';
+      case 'past': return 'Vergangen';
+      default: return '';
+    }
+  };
+
   const isPastStart = (startsAt?: string) => {
     if (!startsAt) return false;
     const date = parseFormDate(startsAt);
@@ -358,8 +404,11 @@ export const ClubDashboard: React.FC = () => {
     setFormData({ ...formData, categories: updated });
   };
 
-  const publishedCamps = camps.filter((camp) => camp.status === 'published').length;
-  const draftCamps = camps.filter((camp) => camp.status === 'draft').length;
+  const currentCamps = camps.filter((camp) => camp.lifecycle_state !== 'past');
+  const pastCamps = camps.filter((camp) => camp.lifecycle_state === 'past');
+  const visibleCamps = activeCampView === 'past' ? pastCamps : currentCamps;
+  const publishedCamps = currentCamps.filter((camp) => camp.status === 'published').length;
+  const draftCamps = currentCamps.filter((camp) => camp.status === 'draft').length;
 
   useEffect(() => {
     if (!isFormDirty) return;
@@ -403,9 +452,10 @@ export const ClubDashboard: React.FC = () => {
       </section>
 
       <section className="dashboard-summary" aria-label="Übersicht">
-        <div><strong>{camps.length}</strong><span>Alle Angebote</span></div>
+        <div><strong>{currentCamps.length}</strong><span>Aktuell</span></div>
         <div><strong>{publishedCamps}</strong><span>Veröffentlicht</span></div>
         <div><strong>{draftCamps}</strong><span>Entwürfe</span></div>
+        <div><strong>{pastCamps.length}</strong><span>Vergangen</span></div>
       </section>
 
       {isEditorOpen && (
@@ -422,6 +472,7 @@ export const ClubDashboard: React.FC = () => {
             {formError}
           </p>
         )}
+        {formNotice && <p className="success-alert" role="status">{formNotice}</p>}
 
         <form className="dashboard-form" onSubmit={handleSubmit} aria-describedby={formError ? 'camp-form-error' : undefined}>
           <section className="editor-step field-wide">
@@ -595,6 +646,22 @@ export const ClubDashboard: React.FC = () => {
                   <Eye size={18} />
                 </button>
               </>
+            ) : formData.status === 'draft' ? (
+              <>
+                <button className="secondary-action" type="submit" name="status" value="draft">
+                  Als Entwurf speichern
+                </button>
+                <button className="primary-action" type="submit" name="status" value="published" disabled={isPastStart(formData.starts_at)}>
+                  <CheckCircle2 size={18} />
+                  Veröffentlichen
+                </button>
+                <button className="secondary-action" type="button" onClick={requestCloseEditor}>
+                  Abbrechen
+                </button>
+                <button className="secondary-action" type="button" onClick={() => setIsPreviewOpen(true)} title="Vorschau" aria-label="Vorschau">
+                  <Eye size={18} />
+                </button>
+              </>
             ) : (
               <>
                 <button className="primary-action" type="submit">
@@ -624,20 +691,41 @@ export const ClubDashboard: React.FC = () => {
       )}
 
       <section className="list-panel">
-        <div className="section-heading">
-          <h2>Meine Freizeiten</h2>
-          <span>{camps.length} Angebote</span>
+        <div className="section-heading camp-list-heading">
+          <div>
+            <h2>{activeCampView === 'past' ? 'Vergangene Freizeiten' : 'Aktuelle Freizeiten'}</h2>
+            <span>{visibleCamps.length} {visibleCamps.length === 1 ? 'Angebot' : 'Angebote'}</span>
+          </div>
+          <div className="camp-view-tabs" role="group" aria-label="Freizeiten nach Zeitraum filtern">
+            <button
+              className={activeCampView === 'current' ? 'is-active' : ''}
+              type="button"
+              aria-pressed={activeCampView === 'current'}
+              onClick={() => setActiveCampView('current')}
+            >
+              Aktuell <span>{currentCamps.length}</span>
+            </button>
+            <button
+              className={activeCampView === 'past' ? 'is-active' : ''}
+              type="button"
+              aria-pressed={activeCampView === 'past'}
+              onClick={() => setActiveCampView('past')}
+            >
+              Vergangen <span>{pastCamps.length}</span>
+            </button>
+          </div>
         </div>
-        {camps.length === 0 ? (
+        {dashboardError && <p className="alert" role="alert">{dashboardError}</p>}
+        {visibleCamps.length === 0 ? (
           <div className="empty-state compact">
             <ImagePlus size={32} />
-            <h3>Noch keine Freizeit angelegt</h3>
-            <p>Lege dein erstes Angebot an und mache es für Familien sichtbar.</p>
-            <button className="primary-action" type="button" onClick={requestCreateEditor}><Plus size={18} /> Freizeit anlegen</button>
+            <h3>{activeCampView === 'past' ? 'Noch keine vergangenen Freizeiten' : 'Noch keine aktuelle Freizeit angelegt'}</h3>
+            <p>{activeCampView === 'past' ? 'Abgelaufene Angebote erscheinen hier automatisch.' : 'Lege dein erstes Angebot an und mache es für Familien sichtbar.'}</p>
+            {activeCampView === 'current' && <button className="primary-action" type="button" onClick={requestCreateEditor}><Plus size={18} /> Freizeit anlegen</button>}
           </div>
         ) : (
           <ul className="management-list">
-            {camps.map((camp) => (
+            {visibleCamps.map((camp) => (
               <li key={camp.id} className="management-item">
                 <div className="management-main">
                   {camp.images?.length ? <img src={camp.images[0]} alt={`Bild zu ${camp.title}`} /> : <span className="thumb-placeholder"><ImagePlus size={22} /></span>}
@@ -645,6 +733,12 @@ export const ClubDashboard: React.FC = () => {
                     <h3>{camp.title}</h3>
                     <p>{camp.categories?.join(', ') || camp.type} · {camp.min_age}-{camp.max_age} Jahre</p>
                     <p className="management-meta"><CalendarDays size={15} /> {formatCampDate(camp.starts_at)} <MapPin size={15} /> {camp.location_text || 'Ort offen'}</p>
+                    {camp.lifecycle_state === 'past' || camp.lifecycle_state === 'ongoing' ? (
+                      <span className={`status-pill ${camp.lifecycle_state === 'past' ? 'is-past' : 'is-ongoing'}`}>
+                        {camp.lifecycle_state === 'past' ? <CalendarDays size={15} /> : <PlayCircle size={15} />}
+                        {getLifecycleLabel(camp.lifecycle_state)}
+                      </span>
+                    ) : null}
                     <span className={`status-pill ${camp.status === 'published' ? 'is-live' : 'is-muted'}`}>
                       {camp.status === 'published' ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
                       {getStatusLabel(camp.status)}
@@ -652,6 +746,12 @@ export const ClubDashboard: React.FC = () => {
                   </div>
                 </div>
                 <div className="item-actions">
+                  {camp.lifecycle_state === 'past' && (
+                    <button className="primary-action management-copy-action" type="button" onClick={() => void handleDuplicate(camp)}>
+                      <Copy size={17} />
+                      Für neues Jahr kopieren
+                    </button>
+                  )}
                   <button className="secondary-action management-edit-action" type="button" onClick={() => handleEdit(camp)}>
                     <Pencil size={17} />
                     Bearbeiten

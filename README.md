@@ -32,6 +32,8 @@ Dies startet das React-Frontend unter `http://localhost:5173` und das PHP-Backen
 * Benutzername: `testverein`
 * Passwort: `testverein`
 
+Die lokale SQLite-Installation erzeugt zusätzlich drei dynamische Demo-Freizeiten für diesen Testverein: eine vergangene, eine laufende und eine bevorstehende. Im Docker-Entwicklungsstack sind sie ebenfalls aktiviert. In produktiven MySQL- oder PostgreSQL-Installationen bleiben sie standardmäßig aus und können bei Bedarf über `SEED_DEMO_DATA=1` eingeschaltet werden.
+
 ## Ausführung via Docker (Gesamter Stack)
 
 Um die gesamte Anwendung vollständig isoliert (Frontend, PHP-Backend und MySQL-Datenbank) laufen zu lassen:

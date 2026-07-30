@@ -155,9 +155,6 @@ function ensureDefaultUser($db, $email, $username, $password, $role, $displayNam
 
     $existingUser = $stmt->fetch(PDO::FETCH_ASSOC);
     if ($existingUser) {
-        $hash = password_hash($password, PASSWORD_BCRYPT);
-        $stmt = $db->prepare('UPDATE users SET email = ?, username = ?, password_hash = ?, role = ?, display_name = ?, club_name = ?, contact_info = ?, is_active = 1, updated_at = ? WHERE id = ?');
-        $stmt->execute([$email, $username, $hash, $role, $displayName, $displayName, $contactInfo, date('Y-m-d H:i:s'), $existingUser['id']]);
         return;
     }
 
@@ -180,6 +177,83 @@ function ensureDefaultHolidays($db) {
             $stmt = $db->prepare('INSERT INTO holidays (name, starts_at, ends_at) VALUES (?, ?, ?)');
             $stmt->execute($holiday);
         }
+    }
+}
+
+function demoDateTime(DateTimeImmutable $date, int $hour, int $minute = 0): string {
+    return $date->setTime($hour, $minute)->format('Y-m-d H:i:s');
+}
+
+function ensureDemoCamps($db) {
+    $timezone = new DateTimeZone('Europe/Berlin');
+    $today = new DateTimeImmutable('today', $timezone);
+
+    $clubStmt = $db->prepare('SELECT id FROM users WHERE username = ?');
+    $clubStmt->execute(['testverein']);
+    $clubId = $clubStmt->fetchColumn();
+    if (!$clubId) {
+        return;
+    }
+
+    $demoCamps = [
+        [
+            'title' => 'Demo: Flötencamp – vergangen',
+            'description' => '<p>Ein musikalisches Ferienangebot als Beispiel für eine vergangene Freizeit.</p>',
+            'categories' => ['Kreativ', 'Natur'],
+            'location' => 'Flötenstein',
+            'latitude' => 50.7546,
+            'longitude' => 12.7336,
+            'starts_at' => demoDateTime($today->modify('-21 days'), 9),
+            'ends_at' => demoDateTime($today->modify('-18 days'), 16),
+            'price' => 129.00,
+            'registration_deadline' => demoDateTime($today->modify('-28 days'), 18),
+        ],
+        [
+            'title' => 'Demo: Sommercamp – läuft gerade',
+            'description' => '<p>Sport, Spiele und gemeinsame Abenteuer – diese Freizeit läuft gerade.</p>',
+            'categories' => ['Sport', 'Lager'],
+            'location' => 'Lauenhain',
+            'latitude' => 50.7977,
+            'longitude' => 12.7104,
+            'starts_at' => demoDateTime($today->modify('-1 day'), 9),
+            'ends_at' => demoDateTime($today->modify('+1 day'), 16),
+            'price' => 159.00,
+            'registration_deadline' => demoDateTime($today->modify('-7 days'), 18),
+        ],
+        [
+            'title' => 'Demo: Waldcamp – demnächst',
+            'description' => '<p>Eine Woche draußen unterwegs: Natur entdecken, kreativ sein und neue Freundschaften schließen.</p>',
+            'categories' => ['Natur', 'Bildung'],
+            'location' => 'Werdau',
+            'latitude' => 50.7360,
+            'longitude' => 12.3760,
+            'starts_at' => demoDateTime($today->modify('+35 days'), 9),
+            'ends_at' => demoDateTime($today->modify('+38 days'), 16),
+            'price' => 189.00,
+            'registration_deadline' => demoDateTime($today->modify('+28 days'), 18),
+        ],
+    ];
+
+    $findStmt = $db->prepare('SELECT id FROM camps WHERE club_id = ? AND title = ?');
+    $insertStmt = $db->prepare('INSERT INTO camps (club_id, title, min_age, max_age, description, location_text, location_lat, location_lng, type, starts_at, ends_at, price_eur, registration_deadline, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $updateStmt = $db->prepare('UPDATE camps SET min_age = ?, max_age = ?, description = ?, location_text = ?, location_lat = ?, location_lng = ?, type = ?, starts_at = ?, ends_at = ?, price_eur = ?, registration_deadline = ?, status = ? WHERE id = ?');
+
+    foreach ($demoCamps as $camp) {
+        $findStmt->execute([$clubId, $camp['title']]);
+        $campId = $findStmt->fetchColumn();
+        $baseValues = [
+            8, 16, $camp['description'], $camp['location'], $camp['latitude'], $camp['longitude'], $camp['categories'][0],
+            $camp['starts_at'], $camp['ends_at'], $camp['price'], $camp['registration_deadline'], 'published',
+        ];
+
+        if ($campId) {
+            $updateStmt->execute([...$baseValues, $campId]);
+        } else {
+            $insertStmt->execute([$clubId, $camp['title'], ...$baseValues]);
+            $campId = $db->lastInsertId();
+        }
+
+        saveCampCategories($db, $campId, $camp['categories']);
     }
 }
 
@@ -217,6 +291,15 @@ function ensureCategoriesSchema($db, $dbConnection) {
 
 ensureCategoriesSchema($db, $dbConnection);
 ensureHolidaysSchema($db, $dbConnection);
+
+try {
+    $seedDemoData = configValue($localConfig, 'SEED_DEMO_DATA', $dbConnection === 'sqlite' ? '1' : '0');
+    if (filter_var($seedDemoData, FILTER_VALIDATE_BOOLEAN)) {
+        ensureDemoCamps($db);
+    }
+} catch (PDOException $e) {
+    error_log("Demo Seed Error: " . $e->getMessage());
+}
 
 function ensureContactEventsSchema($db, $dbConnection) {
     $idType = $dbConnection === 'pgsql' ? 'SERIAL PRIMARY KEY' : ($dbConnection === 'mysql' ? 'INT AUTO_INCREMENT PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT');
@@ -600,6 +683,46 @@ function getCampForUser($db, $campId, $user) {
     return $camp;
 }
 
+function campLifecycleState(array $camp, ?DateTimeImmutable $now = null): string {
+    $timezone = new DateTimeZone('Europe/Berlin');
+    $now = $now ?? new DateTimeImmutable('now', $timezone);
+
+    try {
+        $endsAt = !empty($camp['ends_at']) ? new DateTimeImmutable(str_replace('T', ' ', $camp['ends_at']), $timezone) : null;
+        $startsAt = !empty($camp['starts_at']) ? new DateTimeImmutable(str_replace('T', ' ', $camp['starts_at']), $timezone) : null;
+    } catch (Exception $e) {
+        return 'upcoming';
+    }
+
+    if ($endsAt && $endsAt < $now) {
+        return 'past';
+    }
+
+    if ($startsAt && $startsAt <= $now) {
+        return 'ongoing';
+    }
+
+    return 'upcoming';
+}
+
+function campWithLifecycle(array $camp, ?DateTimeImmutable $now = null): array {
+    $camp['lifecycle_state'] = campLifecycleState($camp, $now);
+    return $camp;
+}
+
+function campWithRelations($db, array $camp, ?DateTimeImmutable $now = null): array {
+    $stmtImg = $db->prepare('SELECT image_url FROM camp_images WHERE camp_id = ?');
+    $stmtImg->execute([$camp['id']]);
+    $camp['images'] = $stmtImg->fetchAll(PDO::FETCH_COLUMN);
+
+    $stmtCat = $db->prepare('SELECT category FROM camp_categories WHERE camp_id = ?');
+    $stmtCat->execute([$camp['id']]);
+    $camp['categories'] = $stmtCat->fetchAll(PDO::FETCH_COLUMN);
+    $camp['type'] = !empty($camp['categories']) ? $camp['categories'][0] : $camp['type'];
+
+    return campWithLifecycle($camp, $now);
+}
+
 function saveUploadedCampImages($db, $campId) {
     if (!isset($_FILES['images'])) {
         return [];
@@ -891,6 +1014,57 @@ try {
             jsonResponse(['message' => 'Camp deleted successfully']);
         }
     }
+    elseif (preg_match('/^\/api\/camps\/(\d+)\/duplicate$/', $requestUri, $matches) && $requestMethod === 'POST') {
+        $user = authenticateUser($db);
+        if (!$user) {
+            jsonResponse(['error' => 'Unauthorized'], 401);
+        }
+
+        $sourceCamp = getCampForUser($db, $matches[1], $user);
+        if (!$sourceCamp) {
+            jsonResponse(['error' => 'Forbidden'], 403);
+        }
+
+        if (campLifecycleState($sourceCamp) !== 'past') {
+            jsonResponse(['error' => 'Nur vergangene Freizeiten können kopiert werden'], 400);
+        }
+
+        try {
+            $db->beginTransaction();
+
+            $copyTitle = trim((string)$sourceCamp['title']);
+            $copyTitle = $copyTitle === '' ? 'Freizeit' : $copyTitle;
+            $stmt = $db->prepare('INSERT INTO camps (club_id, title, min_age, max_age, description, location_text, location_lat, location_lng, type, starts_at, ends_at, price_eur, registration_deadline, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt->execute([
+                $sourceCamp['club_id'], $copyTitle . ' (Kopie)', $sourceCamp['min_age'], $sourceCamp['max_age'],
+                $sourceCamp['description'], $sourceCamp['location_text'], $sourceCamp['location_lat'], $sourceCamp['location_lng'], $sourceCamp['type'],
+                null, null, null, null, 'draft'
+            ]);
+            $newCampId = $db->lastInsertId();
+
+            $copyCategories = $db->prepare('INSERT INTO camp_categories (camp_id, category) SELECT ?, category FROM camp_categories WHERE camp_id = ?');
+            $copyCategories->execute([$newCampId, $sourceCamp['id']]);
+
+            $copyImages = $db->prepare('INSERT INTO camp_images (camp_id, image_url) SELECT ?, image_url FROM camp_images WHERE camp_id = ?');
+            $copyImages->execute([$newCampId, $sourceCamp['id']]);
+
+            $db->commit();
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            throw $e;
+        }
+
+        $stmt = $db->prepare('SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id WHERE c.id = ?');
+        $stmt->execute([$newCampId]);
+        $copiedCamp = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        jsonResponse([
+            'message' => 'Kopie als Entwurf angelegt',
+            'camp' => campWithRelations($db, $copiedCamp),
+        ], 201);
+    }
     elseif (preg_match('/^\/api\/camps\/(\d+)\/images$/', $requestUri, $matches) && $requestMethod === 'POST') {
         $user = authenticateUser($db);
         if (!$user) {
@@ -1101,16 +1275,7 @@ try {
             jsonResponse(['error' => 'Camp not found'], 404);
         }
 
-        $stmtImg = $db->prepare('SELECT image_url FROM camp_images WHERE camp_id = ?');
-        $stmtImg->execute([$camp['id']]);
-        $camp['images'] = $stmtImg->fetchAll(PDO::FETCH_COLUMN);
-
-        $stmtCat = $db->prepare('SELECT category FROM camp_categories WHERE camp_id = ?');
-        $stmtCat->execute([$camp['id']]);
-        $camp['categories'] = $stmtCat->fetchAll(PDO::FETCH_COLUMN);
-        $camp['type'] = !empty($camp['categories']) ? $camp['categories'][0] : $camp['type'];
-
-        jsonResponse($camp);
+        jsonResponse(campWithRelations($db, $camp));
     }
     elseif ($requestUri === '/api/camps' && $requestMethod === 'GET') {
         $query = 'SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id';
@@ -1124,6 +1289,8 @@ try {
             $params[] = $clubId;
             if (!$currentUser || (!isAdminRole($currentUser) && (int)$currentUser['id'] !== $clubId)) {
                 $whereConditions[] = 'c.status IN ("published", "fully_booked")';
+                $whereConditions[] = '(c.ends_at IS NULL OR c.ends_at >= ?)';
+                $params[] = (new DateTimeImmutable('now', new DateTimeZone('Europe/Berlin')))->format('Y-m-d H:i:s');
             }
         } elseif (isset($_GET['all']) && $_GET['all'] == 1) {
             if (!$currentUser || !isAdminRole($currentUser)) {
@@ -1131,6 +1298,8 @@ try {
             }
         } else {
             $whereConditions[] = 'c.status IN ("published", "fully_booked")';
+            $whereConditions[] = '(c.ends_at IS NULL OR c.ends_at >= ?)';
+            $params[] = (new DateTimeImmutable('now', new DateTimeZone('Europe/Berlin')))->format('Y-m-d H:i:s');
         }
 
         if (isset($_GET['age'])) {
@@ -1206,6 +1375,7 @@ try {
                 $camp['images'] = $imagesByCamp[$camp['id']] ?? [];
                 $camp['categories'] = $categoriesByCamp[$camp['id']] ?? [];
                 $camp['type'] = !empty($camp['categories']) ? $camp['categories'][0] : $camp['type'];
+                $camp = campWithLifecycle($camp);
             }
             unset($camp);
         }

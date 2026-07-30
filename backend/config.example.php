@@ -6,6 +6,7 @@ return [
     'DB_NAME' => 'westsachsen_camps',
     'DB_USER' => 'database_user',
     'DB_PASSWORD' => 'database_password',
+    'SEED_DEMO_DATA' => false,
     'CONTACT_TO' => 'kontakt@westsachsen-camps.de',
     'CONTACT_SUBJECT_PREFIX' => '[Ferienfreizeitportal]',
     'CONTACT_RATE_LIMIT_MAX' => 5,

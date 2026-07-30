@@ -38,6 +38,7 @@ export interface Camp {
   price_eur?: number | string;
   registration_deadline?: string;
   status: 'draft' | 'published' | 'fully_booked' | 'archived';
+  lifecycle_state?: 'upcoming' | 'ongoing' | 'past';
   images?: string[];
 }
 
