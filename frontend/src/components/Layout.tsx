@@ -43,10 +43,15 @@ export const Layout: React.FC = () => {
       <header className={`site-header ${user ? 'has-user-menu' : 'is-public'}`}>
         <img className="header-circles" src={headerCircles} alt="" aria-hidden="true" />
         <div className="header-shell" ref={menuRef}>
-          <span className="header-spacer" aria-hidden="true" />
           <Link to="/" className="brand-logo" aria-label="Jugendring Westsachsen Ferienfreizeiten Startseite">
-            <span className="brand-heading">Ferienfreizeiten</span>
             <img src={logoJugendring} alt="Jugendring Westsachsen" />
+            <span className="brand-divider" aria-hidden="true" />
+            <span className="brand-copy">
+              <span className="brand-heading">
+                Ferienfreizeiten<br className="brand-heading-break" /> Westsachsen
+              </span>
+              <span className="brand-subheading">Angebote für Kinder und Jugendliche</span>
+            </span>
           </Link>
 
           {user ? (
@@ -92,9 +97,7 @@ export const Layout: React.FC = () => {
                 </ul>
               </nav>
             </>
-          ) : (
-            <span className="header-spacer" aria-hidden="true" />
-          )}
+          ) : null}
         </div>
       </header>
 

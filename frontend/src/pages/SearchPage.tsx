@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CalendarDays, ChevronDown, Euro, Filter, List, Map, MapPin, Search, Tag, UsersRound, RotateCcw } from 'lucide-react';
+import { CalendarDays, ChevronDown, Euro, Filter, List, Map, MapPin, Search, Tag, UsersRound, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import L from 'leaflet';
 import { SearchMap } from '../components/SearchMap';
 import { ImageGallery } from '../components/ImageGallery';
@@ -98,9 +98,18 @@ export const SearchPage: React.FC = () => {
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [startDateFilter, setStartDateFilter] = useState('');
   const [endDateFilter, setEndDateFilter] = useState('');
+  const [holidayFilter, setHolidayFilter] = useState('');
   const [bounds, setBounds] = useState<{ minLat: number; maxLat: number; minLng: number; maxLng: number } | null>(null);
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
+  const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false);
+  const [draftSelectedTypes, setDraftSelectedTypes] = useState<string[]>([]);
+  const [draftStartDate, setDraftStartDate] = useState('');
+  const [draftEndDate, setDraftEndDate] = useState('');
+  const [isDraftTypeDropdownOpen, setIsDraftTypeDropdownOpen] = useState(false);
   const typeDropdownRef = useRef<HTMLDivElement>(null);
+  const mobileFilterButtonRef = useRef<HTMLButtonElement>(null);
+  const mobileFilterSheetRef = useRef<HTMLDivElement>(null);
+  const mobileFilterCloseRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -111,6 +120,47 @@ export const SearchPage: React.FC = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (!isMobileFiltersOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMobileFiltersOpen(false);
+        requestAnimationFrame(() => mobileFilterButtonRef.current?.focus());
+        return;
+      }
+
+      if (event.key !== 'Tab' || !mobileFilterSheetRef.current) return;
+
+      const focusableElements = Array.from(mobileFilterSheetRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ));
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements.at(-1);
+
+      if (!firstElement || !lastElement) {
+        event.preventDefault();
+      } else if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    requestAnimationFrame(() => mobileFilterCloseRef.current?.focus());
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isMobileFiltersOpen]);
 
   useEffect(() => {
     const fetchHolidays = async () => {
@@ -159,14 +209,35 @@ export const SearchPage: React.FC = () => {
   }, [camps]);
 
   const hasActiveFilters = ageFilter !== '' || selectedTypes.length > 0 || startDateFilter !== '' || endDateFilter !== '';
+  const additionalFilterCount = selectedTypes.length + (startDateFilter || endDateFilter ? (holidayFilter ? 0 : 1) : 0);
+  const resultCountLabel = `${camps.length} ${camps.length === 1 ? 'Angebot' : 'Angebote'}`;
+
+  const applyHolidayFilter = (value: string) => {
+    setHolidayFilter(value);
+    const selected = holidays.find((holiday) => holiday.id.toString() === value);
+    setStartDateFilter(selected ? selected.starts_at.split(' ')[0] : '');
+    setEndDateFilter(selected ? selected.ends_at.split(' ')[0] : '');
+  };
+
+  const updateStartDateFilter = (value: string) => {
+    setHolidayFilter('');
+    setStartDateFilter(value);
+    if (value && endDateFilter && endDateFilter < value) {
+      setEndDateFilter(value);
+    }
+  };
+
+  const updateEndDateFilter = (value: string) => {
+    setHolidayFilter('');
+    setEndDateFilter(value);
+  };
 
   const resetFilters = () => {
     setAgeFilter('');
     setSelectedTypes([]);
     setStartDateFilter('');
     setEndDateFilter('');
-    const holidaySelect = document.getElementById('holiday-filter') as HTMLSelectElement;
-    if (holidaySelect) holidaySelect.value = '';
+    setHolidayFilter('');
   };
 
   const toggleType = (type: string) => {
@@ -175,10 +246,45 @@ export const SearchPage: React.FC = () => {
     );
   };
 
+  const openMobileFilters = () => {
+    setDraftSelectedTypes([...selectedTypes]);
+    setDraftStartDate(startDateFilter);
+    setDraftEndDate(endDateFilter);
+    setIsDraftTypeDropdownOpen(false);
+    setIsMobileFiltersOpen(true);
+  };
+
+  const closeMobileFilters = () => {
+    setIsMobileFiltersOpen(false);
+    requestAnimationFrame(() => mobileFilterButtonRef.current?.focus());
+  };
+
+  const toggleDraftType = (type: string) => {
+    setDraftSelectedTypes((current) => current.includes(type)
+      ? current.filter((selectedType) => selectedType !== type)
+      : [...current, type]);
+  };
+
+  const applyMobileFilters = () => {
+    const datesChanged = draftStartDate !== startDateFilter || draftEndDate !== endDateFilter;
+    setSelectedTypes(draftSelectedTypes);
+    setStartDateFilter(draftStartDate);
+    setEndDateFilter(draftEndDate);
+    setHolidayFilter(datesChanged ? '' : holidayFilter);
+    closeMobileFilters();
+  };
+
+  const resetMobileDraftFilters = () => {
+    setDraftSelectedTypes([]);
+    setDraftStartDate('');
+    setDraftEndDate('');
+    setIsDraftTypeDropdownOpen(false);
+  };
+
   return (
     <div className="search-page">
       <section className="filter-panel" aria-label="Suchfilter">
-        <div className="filter-group-main">
+        <div className="filter-group-main desktop-filter-controls">
           <div className="filter-title">
             <Filter size={20} />
             <span>Filter</span>
@@ -249,16 +355,8 @@ export const SearchPage: React.FC = () => {
               <select
                 id="holiday-filter"
                 aria-label="Ferien auswählen"
-                onChange={(e) => {
-                  const selected = holidays.find(h => h.id.toString() === e.target.value);
-                  if (selected) {
-                    setStartDateFilter(selected.starts_at.split(' ')[0]);
-                    setEndDateFilter(selected.ends_at.split(' ')[0]);
-                  } else {
-                    setStartDateFilter('');
-                    setEndDateFilter('');
-                  }
-                }}
+                value={holidayFilter}
+                onChange={(event) => applyHolidayFilter(event.target.value)}
               >
                 <option value="">Alle Zeiträume</option>
                 {holidays.map((holiday) => (
@@ -276,13 +374,7 @@ export const SearchPage: React.FC = () => {
                 <input
                 type="date"
                 value={startDateFilter}
-                  onChange={(e) => {
-                    const nextStartDate = e.target.value;
-                    setStartDateFilter(nextStartDate);
-                    if (nextStartDate && endDateFilter && endDateFilter < nextStartDate) {
-                      setEndDateFilter(nextStartDate);
-                    }
-                  }}
+                  onChange={(event) => updateStartDateFilter(event.target.value)}
                 />
               </div>
             </label>
@@ -294,7 +386,7 @@ export const SearchPage: React.FC = () => {
                   type="date"
                   value={endDateFilter}
                   min={startDateFilter}
-                  onChange={(e) => setEndDateFilter(e.target.value)}
+                  onChange={(event) => updateEndDateFilter(event.target.value)}
                 />
               </div>
             </label>
@@ -310,33 +402,90 @@ export const SearchPage: React.FC = () => {
           )}
         </div>
 
-        <div className="view-mode-field">
-          <span className="view-mode-label">Ansicht</span>
-          <div className="segmented-control" role="group" aria-label="Darstellung wählen">
-            <button
-              type="button"
-              className={viewMode === 'list' ? 'is-active' : ''}
-              onClick={() => {
-                setViewMode('list');
-                setBounds(null);
-              }}
-              aria-pressed={viewMode === 'list'}
-            >
-              <List size={18} />
-              Liste
-            </button>
-            <button
-              type="button"
-              className={viewMode === 'map' ? 'is-active' : ''}
-              onClick={() => setViewMode('map')}
-              aria-pressed={viewMode === 'map'}
-            >
-              <Map size={18} />
-              Karte
-            </button>
-          </div>
+        <div className="mobile-filter-quick">
+          <label className="field">
+            <span>Alter</span>
+            <div className="input-with-icon">
+              <UsersRound size={18} />
+              <input
+                id="mobile-age-filter"
+                type="number"
+                value={ageFilter}
+                onChange={(event) => setAgeFilter(event.target.value)}
+                placeholder="z.B. 12"
+                min="0"
+              />
+            </div>
+          </label>
+
+          <label className="field">
+            <span>Zeitraum</span>
+            <div className="input-with-icon">
+              <CalendarDays size={18} />
+              <select value={holidayFilter} onChange={(event) => applyHolidayFilter(event.target.value)}>
+                <option value="">Alle Zeiträume</option>
+                {holidays.map((holiday) => (
+                  <option key={holiday.id} value={holiday.id}>{holiday.name}</option>
+                ))}
+              </select>
+            </div>
+          </label>
+
+          <button
+            ref={mobileFilterButtonRef}
+            className="mobile-filter-button"
+            type="button"
+            onClick={openMobileFilters}
+            aria-haspopup="dialog"
+            aria-expanded={isMobileFiltersOpen}
+          >
+            <SlidersHorizontal size={18} />
+            Filter{additionalFilterCount > 0 ? ` (${additionalFilterCount})` : ''}
+          </button>
         </div>
+
+        {(selectedTypes.length > 0 || (startDateFilter || endDateFilter) && !holidayFilter) && (
+          <div className="mobile-active-filters" aria-label="Aktive Filter">
+            {selectedTypes.map((type) => (
+              <button key={type} type="button" onClick={() => setSelectedTypes((current) => current.filter((item) => item !== type))}>
+                {type}<X size={14} aria-hidden="true" />
+              </button>
+            ))}
+            {(startDateFilter || endDateFilter) && !holidayFilter && (
+              <button type="button" onClick={() => { setStartDateFilter(''); setEndDateFilter(''); }}>
+                {startDateFilter || '…'} – {endDateFilter || '…'}<X size={14} aria-hidden="true" />
+              </button>
+            )}
+          </div>
+        )}
       </section>
+
+      <div className="result-toolbar">
+        <span className="result-count" aria-live="polite">{resultCountLabel}</span>
+        <div className="segmented-control" role="group" aria-label="Darstellung wählen">
+          <button
+            type="button"
+            className={viewMode === 'list' ? 'is-active' : ''}
+            onClick={() => {
+              setViewMode('list');
+              setBounds(null);
+            }}
+            aria-pressed={viewMode === 'list'}
+          >
+            <List size={18} />
+            Liste
+          </button>
+          <button
+            type="button"
+            className={viewMode === 'map' ? 'is-active' : ''}
+            onClick={() => setViewMode('map')}
+            aria-pressed={viewMode === 'map'}
+          >
+            <Map size={18} />
+            Karte
+          </button>
+        </div>
+      </div>
 
       {viewMode === 'list' ? (
         <section aria-label="Ergebnisliste">
@@ -431,6 +580,104 @@ export const SearchPage: React.FC = () => {
         </section>
       ) : (
         <SearchMap camps={camps} setBounds={setBounds} />
+      )}
+
+      {isMobileFiltersOpen && (
+        <div className="mobile-filter-dialog">
+          <button className="mobile-filter-backdrop" type="button" aria-label="Filter schließen" onClick={closeMobileFilters} />
+          <div
+            ref={mobileFilterSheetRef}
+            className="mobile-filter-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mobile-filter-title"
+          >
+            <div className="mobile-filter-sheet-header">
+              <div>
+                <span className="eyebrow">Suche verfeinern</span>
+                <h2 id="mobile-filter-title">Weitere Filter</h2>
+              </div>
+              <button ref={mobileFilterCloseRef} className="mobile-filter-close" type="button" onClick={closeMobileFilters} aria-label="Filter schließen">
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="mobile-filter-sheet-content">
+              <div className="field">
+                <span>Kategorie</span>
+                <div className="multi-select-container">
+                  <button
+                    type="button"
+                    className="multi-select-trigger"
+                    onClick={() => setIsDraftTypeDropdownOpen((current) => !current)}
+                    aria-haspopup="listbox"
+                    aria-expanded={isDraftTypeDropdownOpen}
+                  >
+                    <span className="multi-select-value">
+                      <Tag size={18} />
+                      <span className={draftSelectedTypes.length ? '' : 'is-placeholder'}>
+                        {draftSelectedTypes.length === 0 ? 'Alle Kategorien' : draftSelectedTypes.join(', ')}
+                      </span>
+                    </span>
+                    <ChevronDown size={16} />
+                  </button>
+
+                  {isDraftTypeDropdownOpen && (
+                    <div className="multi-select-dropdown" role="listbox" aria-label="Kategorien auswählen">
+                      {typeOptions.map((type) => (
+                        <label key={type} className="multi-select-option">
+                          <input
+                            type="checkbox"
+                            checked={draftSelectedTypes.includes(type)}
+                            onChange={() => toggleDraftType(type)}
+                          />
+                          <span>{type}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="mobile-date-fields">
+                <label className="field">
+                  <span>Zeitraum von</span>
+                  <div className="input-with-icon">
+                    <CalendarDays size={18} />
+                    <input
+                      type="date"
+                      value={draftStartDate}
+                      onChange={(event) => {
+                        const nextStartDate = event.target.value;
+                        setDraftStartDate(nextStartDate);
+                        if (nextStartDate && draftEndDate && draftEndDate < nextStartDate) {
+                          setDraftEndDate(nextStartDate);
+                        }
+                      }}
+                    />
+                  </div>
+                </label>
+                <label className="field">
+                  <span>Bis</span>
+                  <div className="input-with-icon">
+                    <CalendarDays size={18} />
+                    <input
+                      type="date"
+                      value={draftEndDate}
+                      min={draftStartDate}
+                      onChange={(event) => setDraftEndDate(event.target.value)}
+                    />
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div className="mobile-filter-sheet-actions">
+              <button type="button" className="mobile-filter-reset" onClick={resetMobileDraftFilters}>Zurücksetzen</button>
+              <button type="button" className="primary-action" onClick={applyMobileFilters}>Filter übernehmen</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
