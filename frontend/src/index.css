@@ -3234,3 +3234,165 @@ textarea:focus {
     width: 100%;
   }
 }
+
+.settings-page {
+  display: grid;
+  gap: clamp(18px, 3vw, 28px);
+}
+
+.account-info-panel,
+.security-panel {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: clamp(18px, 3vw, 28px);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.settings-section-heading {
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.settings-section-heading > svg {
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
+  color: var(--primary-text-color);
+}
+
+.settings-section-heading h2,
+.settings-section-heading p {
+  margin: 0;
+}
+
+.settings-section-heading h2 {
+  font-size: clamp(1.22rem, 2vw, 1.48rem);
+}
+
+.settings-section-heading p {
+  margin-top: 0.25rem;
+  color: var(--text-color-muted);
+}
+
+.account-info-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+.account-info-list > div {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.9rem 1rem;
+  background: #fbfcfa;
+}
+
+.account-info-list dt,
+.public-profile-preview > span {
+  color: var(--text-color-muted);
+  font-size: 0.73rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.account-info-list dd {
+  margin: 0;
+  color: var(--text-color);
+  font-weight: 750;
+}
+
+.account-role-badge {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  color: var(--primary-text-color);
+  background: var(--bg-soft);
+  font-size: 0.82rem;
+}
+
+.public-profile-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr);
+  gap: clamp(18px, 3vw, 28px);
+  align-items: start;
+}
+
+.settings-form,
+.password-change-form {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-form textarea {
+  min-height: 128px;
+}
+
+.public-profile-preview {
+  display: grid;
+  gap: 0.6rem;
+  border: 1px solid #cbdcbe;
+  border-radius: var(--radius-md);
+  padding: 18px;
+  background: var(--bg-soft);
+}
+
+.public-profile-preview strong {
+  color: var(--primary-text-color);
+  font-size: 1.05rem;
+}
+
+.public-profile-preview p {
+  margin: 0;
+  color: var(--text-color-muted);
+  white-space: pre-wrap;
+}
+
+.security-panel {
+  display: grid;
+  align-items: start;
+}
+
+.security-panel > .secondary-action {
+  width: fit-content;
+}
+
+.password-change-form {
+  width: min(620px, 100%);
+  margin-top: 2px;
+}
+
+.security-reset-link {
+  width: fit-content;
+  margin-top: 16px;
+}
+
+@media (max-width: 680px) {
+  .account-info-list,
+  .public-profile-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-section-heading {
+    gap: 0.7rem;
+  }
+
+  .security-panel > .secondary-action,
+  .settings-form > .primary-action {
+    width: 100%;
+  }
+
+  .password-change-form .form-actions {
+    flex-direction: column;
+  }
+
+  .password-change-form .form-actions button {
+    width: 100%;
+  }
+}

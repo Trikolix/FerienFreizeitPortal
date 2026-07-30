@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { KeyRound, LogIn, UserRound } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 
@@ -9,6 +9,8 @@ export const LoginPage: React.FC = () => {
   const [error, setError] = useState('');
   const login = useAuthStore((state) => state.login);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const passwordChanged = searchParams.get('passwort-geaendert') === '1';
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -54,6 +56,7 @@ export const LoginPage: React.FC = () => {
               {error}
             </p>
           )}
+          {passwordChanged && <p className="success-alert" role="status">Passwort geändert. Bitte melde dich mit dem neuen Passwort an.</p>}
 
           <label className="field">
             <span>E-Mail oder Nutzername</span>

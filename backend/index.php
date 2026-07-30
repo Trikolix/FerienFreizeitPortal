@@ -752,10 +752,41 @@ try {
         $stmt = $db->prepare('UPDATE users SET password_hash = ?, is_active = 1, updated_at = ? WHERE id = ?');
         $stmt->execute([$passwordHash, $now, $row['user_id']]);
 
+        $stmt = $db->prepare('DELETE FROM sessions WHERE user_id = ?');
+        $stmt->execute([$row['user_id']]);
+
         $stmt = $db->prepare('UPDATE password_tokens SET used_at = ? WHERE id = ?');
         $stmt->execute([$now, $row['id']]);
 
         jsonResponse(['message' => 'Passwort wurde gespeichert']);
+    }
+    elseif ($requestUri === '/api/me/password' && $requestMethod === 'PUT') {
+        $user = authenticateUser($db);
+        if (!$user) {
+            jsonResponse(['error' => 'Unauthorized'], 401);
+        }
+
+        $data = json_decode(file_get_contents('php://input'), true) ?? [];
+        $currentPassword = $data['current_password'] ?? '';
+        $newPassword = $data['new_password'] ?? '';
+
+        if (!password_verify($currentPassword, $user['password_hash'] ?? '')) {
+            jsonResponse(['error' => 'Das aktuelle Passwort ist nicht korrekt'], 400);
+        }
+
+        if (strlen($newPassword) < 8) {
+            jsonResponse(['error' => 'Das neue Passwort muss mindestens 8 Zeichen lang sein'], 400);
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $passwordHash = password_hash($newPassword, PASSWORD_BCRYPT);
+        $stmt = $db->prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?');
+        $stmt->execute([$passwordHash, $now, $user['id']]);
+
+        $stmt = $db->prepare('DELETE FROM sessions WHERE user_id = ?');
+        $stmt->execute([$user['id']]);
+
+        jsonResponse(['message' => 'Passwort wurde geändert. Bitte melde dich erneut an.']);
     }
     elseif ($requestUri === '/api/logout' && $requestMethod === 'POST') {
         $authHeader = getAuthorizationHeader();
