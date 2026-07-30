@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, ImagePlus, Pencil, Plus, Trash2, XCircle, Eye, Tag, ChevronDown } from 'lucide-react';
+import { CheckCircle2, ImagePlus, Pencil, Plus, Trash2, XCircle, Eye, Tag, ChevronDown, CalendarDays, MapPin, MoreHorizontal } from 'lucide-react';
 import ReactQuill from 'react-quill-new';
 import 'react-quill-new/dist/quill.snow.css';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -35,6 +35,11 @@ const parseFormDate = (value?: string) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const formatCampDate = (value?: string) => {
+  const date = parseFormDate(value);
+  return date ? new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date) : 'Termin offen';
+};
+
 export const ClubDashboard: React.FC = () => {
   const { user, token } = useAuthStore();
   const navigate = useNavigate();
@@ -44,6 +49,9 @@ export const ClubDashboard: React.FC = () => {
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const [formError, setFormError] = useState('');
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [activeEditorSection, setActiveEditorSection] = useState<'basics' | 'schedule' | 'location' | 'images'>('basics');
+  const [campToDelete, setCampToDelete] = useState<Camp | null>(null);
   
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
   const typeDropdownRef = useRef<HTMLDivElement>(null);
@@ -192,6 +200,7 @@ export const ClubDashboard: React.FC = () => {
       }
 
       setIsEditing(false);
+      setIsEditorOpen(false);
       setFormData({});
       setSelectedFiles(null);
       fetchCamps();
@@ -216,6 +225,25 @@ export const ClubDashboard: React.FC = () => {
   const handleEdit = (camp: Camp) => {
     setFormData(camp);
     setIsEditing(true);
+    setIsEditorOpen(true);
+    setActiveEditorSection('basics');
+    setSelectedFiles(null);
+    setFormError('');
+  };
+
+  const startCreate = () => {
+    setFormData({});
+    setIsEditing(false);
+    setSelectedFiles(null);
+    setFormError('');
+    setActiveEditorSection('basics');
+    setIsEditorOpen(true);
+  };
+
+  const closeEditor = () => {
+    setIsEditorOpen(false);
+    setIsEditing(false);
+    setFormData({});
     setSelectedFiles(null);
     setFormError('');
   };
@@ -284,18 +312,37 @@ export const ClubDashboard: React.FC = () => {
     setFormData({ ...formData, categories: updated });
   };
 
+  const publishedCamps = camps.filter((camp) => camp.status === 'published').length;
+  const draftCamps = camps.filter((camp) => camp.status === 'draft').length;
+
   return (
     <div className="dashboard-page">
-      <section className="page-heading">
-        <span className="eyebrow">Vereins-Dashboard</span>
-        <h1>Freizeiten verwalten</h1>
-        <p>Lege Angebote an, aktualisiere Details und steuere die Sichtbarkeit für die öffentliche Suche.</p>
+      <section className="dashboard-hero">
+        <div className="page-heading">
+          <span className="eyebrow">Vereinsbereich</span>
+          <h1>Meine Freizeiten</h1>
+          <p>Verwalte deine Angebote und behalte ihre Sichtbarkeit im Blick.</p>
+        </div>
+        <button className="primary-action dashboard-create-action" type="button" onClick={startCreate}>
+          <Plus size={18} />
+          Freizeit anlegen
+        </button>
       </section>
 
-      <section className="form-panel">
+      <section className="dashboard-summary" aria-label="Übersicht">
+        <div><strong>{camps.length}</strong><span>Alle Angebote</span></div>
+        <div><strong>{publishedCamps}</strong><span>Veröffentlicht</span></div>
+        <div><strong>{draftCamps}</strong><span>Entwürfe</span></div>
+      </section>
+
+      {isEditorOpen && (
+      <section className="form-panel camp-editor">
         <div className="section-heading">
-          <h2>{isEditing ? 'Freizeit bearbeiten' : 'Neue Freizeit anlegen'}</h2>
-          <span>{isEditing ? 'Änderungen werden direkt gespeichert' : 'Alle Pflichtfelder sauber ausfüllen'}</span>
+          <div>
+            <span className="eyebrow">{isEditing ? 'Bearbeiten' : 'Neue Freizeit'}</span>
+            <h2>{isEditing ? formData.title || 'Freizeit bearbeiten' : 'Freizeit anlegen'}</h2>
+          </div>
+          <button className="editor-close-button" type="button" onClick={closeEditor} aria-label="Editor schließen">×</button>
         </div>
         {formError && (
           <p className="alert" id="camp-form-error" role="alert">
@@ -304,6 +351,12 @@ export const ClubDashboard: React.FC = () => {
         )}
 
         <form className="dashboard-form" onSubmit={handleSubmit} aria-describedby={formError ? 'camp-form-error' : undefined}>
+          <section className="editor-step field-wide">
+            <button className="editor-step-toggle" type="button" onClick={() => setActiveEditorSection('basics')} aria-expanded={activeEditorSection === 'basics'}>
+              <span><strong>1. Grundlagen</strong><small>Titel, Kategorie, Alter und Beschreibung</small></span>
+              <ChevronDown size={18} />
+            </button>
+            {activeEditorSection === 'basics' && <div className="editor-step-content dashboard-form-grid">
           <label className="field">
             <span>Titel</span>
             <input type="text" value={formData.title || ''} onChange={(event) => setFormData({ ...formData, title: event.target.value })} required />
@@ -366,10 +419,15 @@ export const ClubDashboard: React.FC = () => {
               onChange={(value: string) => setFormData({ ...formData, description: value })}
             />
           </div>
-          <label className="field field-wide">
-            <span>Ort</span>
-            <input type="text" value={formData.location_text || ''} onChange={(event) => setFormData({ ...formData, location_text: event.target.value })} required />
-          </label>
+            </div>}
+          </section>
+
+          <section className="editor-step field-wide">
+            <button className="editor-step-toggle" type="button" onClick={() => setActiveEditorSection('schedule')} aria-expanded={activeEditorSection === 'schedule'}>
+              <span><strong>2. Termin &amp; Preis</strong><small>Zeitraum, Teilnahmebeitrag und Anmeldeschluss</small></span>
+              <ChevronDown size={18} />
+            </button>
+            {activeEditorSection === 'schedule' && <div className="editor-step-content dashboard-form-grid">
           <label className="field">
             <span>Beginn</span>
             <input type="datetime-local" value={normalizeDateTimeLocal(formData.starts_at)} onChange={(event) => setFormData({ ...formData, starts_at: event.target.value })} required />
@@ -385,6 +443,19 @@ export const ClubDashboard: React.FC = () => {
           <label className="field">
             <span>Anmeldeschluss</span>
             <input type="datetime-local" value={normalizeDateTimeLocal(formData.registration_deadline)} onChange={(event) => setFormData({ ...formData, registration_deadline: event.target.value })} required />
+          </label>
+            </div>}
+          </section>
+
+          <section className="editor-step field-wide">
+            <button className="editor-step-toggle" type="button" onClick={() => setActiveEditorSection('location')} aria-expanded={activeEditorSection === 'location'}>
+              <span><strong>3. Ort &amp; Karte</strong><small>Adresse und Kartenposition</small></span>
+              <ChevronDown size={18} />
+            </button>
+            {activeEditorSection === 'location' && <div className="editor-step-content dashboard-form-grid">
+          <label className="field field-wide">
+            <span>Ort</span>
+            <input type="text" value={formData.location_text || ''} onChange={(event) => setFormData({ ...formData, location_text: event.target.value })} required />
           </label>
           <label className="field">
             <span>Latitude für Karte</span>
@@ -402,6 +473,15 @@ export const ClubDashboard: React.FC = () => {
               onChange={(lat, lng) => setFormData({ ...formData, location_lat: lat, location_lng: lng })}
             />
           </div>
+            </div>}
+          </section>
+
+          <section className="editor-step field-wide">
+            <button className="editor-step-toggle" type="button" onClick={() => setActiveEditorSection('images')} aria-expanded={activeEditorSection === 'images'}>
+              <span><strong>4. Bilder</strong><small>Vorschaubild und Galerie</small></span>
+              <ChevronDown size={18} />
+            </button>
+            {activeEditorSection === 'images' && <div className="editor-step-content dashboard-form-grid">
           {isEditing && Boolean(formData.images?.length) && (
             <div className="field field-wide">
               <span>Vorhandene Bilder</span>
@@ -426,7 +506,9 @@ export const ClubDashboard: React.FC = () => {
             <span>{isEditing ? 'Weitere Bilder hinzufügen' : 'Bilder hochladen'}</span>
             <input type="file" multiple accept="image/*" onChange={(event) => setSelectedFiles(event.target.files)} />
           </label>
-          <div className="form-actions">
+            </div>}
+          </section>
+          <div className="form-actions editor-actions">
             {!isEditing ? (
               <>
                 <button className="secondary-action" type="submit" name="status" value="draft">
@@ -446,7 +528,7 @@ export const ClubDashboard: React.FC = () => {
                   <CheckCircle2 size={18} />
                   Speichern
                 </button>
-                <button className="secondary-action" type="button" onClick={() => { setIsEditing(false); setFormData({}); setSelectedFiles(null); setFormError(''); }}>
+                <button className="secondary-action" type="button" onClick={closeEditor}>
                   Abbrechen
                 </button>
                 <button className="secondary-action" type="button" onClick={() => setIsPreviewOpen(true)} title="Vorschau" aria-label="Vorschau">
@@ -457,6 +539,7 @@ export const ClubDashboard: React.FC = () => {
           </div>
         </form>
       </section>
+      )}
 
       {isPreviewOpen && (
         <PreviewModal
@@ -475,7 +558,9 @@ export const ClubDashboard: React.FC = () => {
         {camps.length === 0 ? (
           <div className="empty-state compact">
             <ImagePlus size={32} />
-            <p>Keine Freizeiten vorhanden.</p>
+            <h3>Noch keine Freizeit angelegt</h3>
+            <p>Lege dein erstes Angebot an und mache es für Familien sichtbar.</p>
+            <button className="primary-action" type="button" onClick={startCreate}><Plus size={18} /> Freizeit anlegen</button>
           </div>
         ) : (
           <ul className="management-list">
@@ -485,7 +570,8 @@ export const ClubDashboard: React.FC = () => {
                   {camp.images?.length ? <img src={camp.images[0]} alt={`Bild zu ${camp.title}`} /> : <span className="thumb-placeholder"><ImagePlus size={22} /></span>}
                   <div>
                     <h3>{camp.title}</h3>
-                    <p>{camp.categories?.join(', ') || camp.type} · {camp.location_text || 'Ort offen'} · {camp.min_age}-{camp.max_age} Jahre</p>
+                    <p>{camp.categories?.join(', ') || camp.type} · {camp.min_age}-{camp.max_age} Jahre</p>
+                    <p className="management-meta"><CalendarDays size={15} /> {formatCampDate(camp.starts_at)} <MapPin size={15} /> {camp.location_text || 'Ort offen'}</p>
                     <span className={`status-pill ${camp.status === 'published' ? 'is-live' : 'is-muted'}`}>
                       {camp.status === 'published' ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
                       {getStatusLabel(camp.status)}
@@ -493,28 +579,45 @@ export const ClubDashboard: React.FC = () => {
                   </div>
                 </div>
                 <div className="item-actions">
-                  <button className="icon-button" onClick={() => handleEdit(camp)} aria-label={`${camp.title} bearbeiten`}>
+                  <button className="secondary-action management-edit-action" type="button" onClick={() => handleEdit(camp)}>
                     <Pencil size={17} />
+                    Bearbeiten
                   </button>
-                  <select
-                    className="status-select"
-                    value={camp.status}
-                    onChange={(e) => updateStatus(camp, e.target.value)}
-                  >
-                    <option value="draft">Entwurf</option>
-                    <option value="published" disabled={isPastStart(camp.starts_at)}>Veröffentlicht</option>
-                    <option value="fully_booked">Ausgebucht</option>
-                    <option value="archived">Archiv</option>
-                  </select>
-                  <button className="danger-action" onClick={() => handleDelete(camp.id)} aria-label={`${camp.title} löschen`}>
-                    <Trash2 size={17} />
-                  </button>
+                  <details className="camp-actions-menu">
+                    <summary aria-label={`Weitere Aktionen für ${camp.title}`}><MoreHorizontal size={20} /></summary>
+                    <div>
+                      <label>
+                        Status
+                        <select className="status-select" value={camp.status} onChange={(event) => updateStatus(camp, event.target.value)}>
+                          <option value="draft">Entwurf</option>
+                          <option value="published" disabled={isPastStart(camp.starts_at)}>Veröffentlicht</option>
+                          <option value="fully_booked">Ausgebucht</option>
+                          <option value="archived">Archiv</option>
+                        </select>
+                      </label>
+                      <button className="danger-action" type="button" onClick={() => setCampToDelete(camp)}><Trash2 size={17} /> Freizeit löschen</button>
+                    </div>
+                  </details>
                 </div>
               </li>
             ))}
           </ul>
         )}
       </section>
+
+      {campToDelete && (
+        <div className="delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-camp-title">
+          <div className="delete-dialog-backdrop" />
+          <div className="delete-dialog-content">
+            <h2 id="delete-camp-title">Freizeit löschen?</h2>
+            <p>„{campToDelete.title}“ und die zugehörigen Bilder werden dauerhaft entfernt.</p>
+            <div>
+              <button className="secondary-action" type="button" onClick={() => setCampToDelete(null)}>Abbrechen</button>
+              <button className="danger-action" type="button" onClick={() => { void handleDelete(campToDelete.id); setCampToDelete(null); }}><Trash2 size={17} /> Löschen</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
