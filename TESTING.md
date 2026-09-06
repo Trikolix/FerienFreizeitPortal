@@ -1,0 +1,91 @@
+# Prüfungen reproduzieren
+
+Alle schreibenden Tests ausschließlich gegen **separate Wegwerf-Datenbanken** ausführen. Die vorhandene `backend/database.sqlite` und bereits vorhandene Docker-Datenbankvolumes werden nicht benötigt.
+
+## PHP: Unit- und echte HTTP-Tests
+
+Mit installiertem PHP 8.3+ und den Erweiterungen aus der README:
+
+```sh
+cd backend
+composer install
+composer test
+composer audit
+```
+
+Oder aus dem Repository-Root mit Docker (PowerShell):
+
+```powershell
+docker build -t ffp-check backend
+docker run --rm ffp-check sh -c 'composer install --no-interaction --prefer-dist && php vendor/bin/phpunit tests --do-not-cache-result'
+```
+
+Der Testserver und sämtliche SQLite-Dateien/Bilder/Logs entstehen in zufälligen temporären Verzeichnissen. Linux/Docker ist die geprüfte Umgebung für den HTTP-Testserver (`sendmail_path=/bin/false` simuliert einen Versandfehler).
+
+Abgedeckt: Rechte/Rollen, öffentliche Daten, private Entwürfe, inaktive Nutzer, CSRF, widerrufene Sessions, Resetlinks, Rate-Limits/gefälschte Proxy-Header, XSS, Feldvalidierung, gemischte Upload-Auswahl sowie Bildreferenzen nach dem Kopieren/Löschen.
+
+## Frontend und Browser mit SQLite
+
+```powershell
+docker run --rm -d --name ffp-browser-test -p 127.0.0.1:18080:8000 -e APP_ENV=development -e APP_BASE_URL=http://127.0.0.1:5174 -e DB_CONNECTION=sqlite -e DB_SQLITE_PATH=/tmp/browser.sqlite -e UPLOAD_DIR=/tmp/browser-uploads -e SEED_DEMO_DATA=1 ffp-check php -d sendmail_path=/bin/false -S 0.0.0.0:8000 index.php
+cd frontend
+npm ci
+npm run lint
+npm run build
+npm audit
+npx playwright install chromium
+npm run test:e2e
+```
+
+Playwright startet Vite selbst auf Port 5174 und verwendet ausschließlich das Backend auf Port 18080. Gegen einen bereits laufenden, **isolierten** Nginx-/Apache-Teststack kann stattdessen `PLAYWRIGHT_BASE_URL=http://127.0.0.1:18084` gesetzt werden. Dann startet Playwright kein Vite.
+
+Nach dem Lauf `docker stop ffp-browser-test` ausführen. Das entfernt nur diesen Testcontainer samt dessen flüchtiger DB/Uploads, nicht die Entwicklungsdaten. Für wiederholte vollständige Testläufe einen frischen Testcontainer starten: Die Tests umgehen die Anmelde-Limits bewusst nicht.
+
+Browserfälle: Anmeldung/Reload/Logout, unvollständiger Entwurf, Veröffentlichung, Fokus und Vorschau/Escape, fehlerhaftes Speichern/Doppelklick, erneute Anmeldung ohne Eingabeverlust, Einladungsfehler/erneuter Versand, Bildvorschau vor Upload, Suchfilter/Fehler/Retry und 375-Pixel-Ansicht. Tests nutzen Chromium; fehlgeschlagene Läufe hinterlassen lokale Traces in `frontend/test-results/`.
+
+## SQL und Apache (PowerShell, Repository-Root)
+
+Die folgenden Namen sind ausschließlich für diese Wegwerf-Umgebung gedacht. Bestehen sie bereits, erst prüfen, wem die Container gehören; keine bestehenden Anwendungsdatenbanken dafür verwenden.
+
+```powershell
+docker network create ffp-test-sql
+docker run --rm -d --name ffp-test-mysql --network ffp-test-sql -e MYSQL_ROOT_PASSWORD=test-only -e MYSQL_DATABASE=ffp mysql:8.0
+docker run --rm -d --name ffp-test-pg --network ffp-test-sql -e POSTGRES_PASSWORD=test-only -e POSTGRES_DB=ffp postgres:16-alpine
+```
+
+Warten, bis die Datenbanken bereit sind (`docker logs ffp-test-mysql`, `docker logs ffp-test-pg`), dann:
+
+```powershell
+docker run --rm -d --name ffp-test-mysql-api --network ffp-test-sql -p 127.0.0.1:18081:80 -e APP_ENV=development -e APP_BASE_URL=http://localhost:5173 -e DB_CONNECTION=mysql -e DB_HOST=ffp-test-mysql -e DB_NAME=ffp -e DB_USER=root -e DB_PASSWORD=test-only -e SEED_DEMO_DATA=1 ffp-check
+docker run --rm -d --name ffp-test-pg-api --network ffp-test-sql -p 127.0.0.1:18082:80 -e APP_ENV=development -e APP_BASE_URL=http://localhost:5173 -e DB_CONNECTION=pgsql -e DB_HOST=ffp-test-pg -e DB_NAME=ffp -e DB_USER=postgres -e DB_PASSWORD=test-only -e SEED_DEMO_DATA=1 ffp-check
+$env:FFP_SQL_SMOKE='1'
+node backend/tests/sql-smoke.mjs http://127.0.0.1:18081
+node backend/tests/sql-smoke.mjs http://127.0.0.1:18082
+```
+
+Diese Tests prüfen HTTP-Anmeldung, Draft-Privatheit, Validierung, HTML-Bereinigung, Veröffentlichung, Statusänderung durch Admin, Suchfilter, Ferienüberschneidung, Löschen, Logout und gesperrte Backend-Dateien unter Apache. Die Testfreizeiten/-ferien werden am Ende entfernt.
+
+Anschließend ausschließlich die selbst gestarteten Testcontainer stoppen:
+
+```powershell
+docker stop ffp-test-mysql-api ffp-test-pg-api ffp-test-mysql ffp-test-pg
+docker network rm ffp-test-sql
+```
+
+## Produktionsmodus getrennt prüfen
+
+`backend/tests/production-smoke.mjs` erwartet eine frisch eingerichtete Wegwerf-SQL-Datenbank mit:
+
+- `APP_ENV=production`, `APP_BASE_URL=https://portal.example.test`, einem ausschließlich für den Test erzeugten `APP_KEY` und gültigem `MAIL_FROM`.
+- `BOOTSTRAP_ADMIN_EMAIL=bootstrap@example.test`, `BOOTSTRAP_ADMIN_PASSWORD=temporary-bootstrap-test-password` (nur Testwerte, nicht deployen).
+- Absichtlich `SEED_DEMO_DATA=1`, um zu prüfen, dass das im Produktionsmodus ignoriert wird.
+
+API ausschließlich an `127.0.0.1:18083` binden, `FFP_SQL_SMOKE=1` setzen und `node backend/tests/production-smoke.mjs http://127.0.0.1:18083` ausführen. Die Prüfung sendet Cookies manuell: Sie testet Attribute, Bootstrap, kein Demo-Seeding und CSRF, **nicht** einen echten TLS-Endpunkt. Vor Freigabe bleiben HTTPS-/Proxy- und echte Mailzustellungstests auf dem Zielserver erforderlich.
+
+## Verifizierter Stand
+
+- PHP 8.3: 36 Tests, 193 Assertions erfolgreich.
+- MySQL 8.0 und PostgreSQL 16: SQL-/Apache-Smoke-Tests erfolgreich.
+- Produktionsmodus: gezielter erster Admin, kein Demo-Seeding, sichere Cookieattribute und Logout erfolgreich.
+- Frontend: TypeScript-/Vite-Build, ESLint und 9 Chromium-Browserabläufe erfolgreich; zusätzlich mit gebautem Frontend hinter Nginx und MySQL.
+- npm-/Composer-Audit ohne gemeldete Schwachstellen beim Prüflauf. Kein Ersatz für einen umfassenden Sicherheitsnachweis.

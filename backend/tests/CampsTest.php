@@ -2,9 +2,10 @@
 use PHPUnit\Framework\TestCase;
 
 class CampsTest extends TestCase {
-    private $dbFile = __DIR__ . '/../test_database.sqlite';
+    private string $dbFile;
 
     protected function setUp(): void {
+        $this->dbFile = tempnam(sys_get_temp_dir(), 'ffp-camps-');
         $db = new PDO('sqlite:' . $this->dbFile);
         $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 

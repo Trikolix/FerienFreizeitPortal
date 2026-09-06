@@ -1,15 +1,6 @@
 <?php
 require_once __DIR__ . '/helpers.php';
 
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, Authorization');
-
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit();
-}
-
 $localConfigPath = __DIR__ . '/config.local.php';
 $localConfig = is_file($localConfigPath) ? require $localConfigPath : [];
 if (!is_array($localConfig)) {
@@ -17,6 +8,27 @@ if (!is_array($localConfig)) {
 }
 
 require_once __DIR__ . '/utils.php';
+require_once __DIR__ . '/security.php';
+require_once __DIR__ . '/validation.php';
+require_once __DIR__ . '/uploads.php';
+date_default_timezone_set('Europe/Berlin');
+
+// Unit tests import functions only, without touching the development database.
+if ((defined('PHPUNIT_RUNNING') && PHPUNIT_RUNNING) || (defined('TESTING') && TESTING)) return;
+
+enforceRequestSecurity();
+$requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+if (php_sapi_name() === 'cli-server' && !str_starts_with($requestPath, '/api/')) {
+    if (preg_match('~^/uploads/[a-f0-9.]+\.(jpg|png|webp)$~D', $requestPath) && is_file(uploadDirectory() . '/' . basename($requestPath))) {
+        header('Content-Type: ' . (new finfo(FILEINFO_MIME_TYPE))->file(uploadDirectory() . '/' . basename($requestPath)));
+        readfile(uploadDirectory() . '/' . basename($requestPath));
+        exit;
+    }
+    jsonResponse(['error' => 'Nicht gefunden.'], 404);
+}
+if (isProduction() && (strlen((string)appConfig('APP_KEY', '')) < 32 || !str_starts_with((string)appConfig('APP_BASE_URL', ''), 'https://') || !appConfig('MAIL_FROM'))) {
+    jsonResponse(['error' => 'Produktionskonfiguration unvollständig.'], 503);
+}
 
 // Database Connection
 $dbConnection = configValue($localConfig, 'DB_CONNECTION', 'sqlite');
@@ -24,6 +36,7 @@ $dbHost = configValue($localConfig, 'DB_HOST', '127.0.0.1');
 $dbName = configValue($localConfig, 'DB_NAME', 'westsachsen_camps');
 $dbUser = configValue($localConfig, 'DB_USER', 'root');
 $dbPass = configValue($localConfig, 'DB_PASSWORD', '');
+if (!in_array($dbConnection, ['sqlite', 'mysql', 'pgsql'], true) || (isProduction() && $dbConnection === 'sqlite')) jsonResponse(['error' => 'Ungültige Datenbankkonfiguration.'], 503);
 
 try {
     if ($dbConnection === 'pgsql') {
@@ -33,15 +46,18 @@ try {
         $dsn = "mysql:host=$dbHost;dbname=$dbName;charset=utf8mb4";
         $db = new PDO($dsn, $dbUser, $dbPass);
     } else {
-        $db = new PDO('sqlite:' . __DIR__ . '/database.sqlite');
+        $db = new PDO('sqlite:' . appConfig('DB_SQLITE_PATH', __DIR__ . '/database.sqlite'));
     }
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    if ($dbConnection === 'sqlite') {
+        $db->exec('PRAGMA foreign_keys=ON');
+        $db->exec('PRAGMA busy_timeout=5000');
+    }
 
     // Auto-ensure schema if tables don't exist
-    $checkTable = "SELECT 1 FROM users LIMIT 1";
-    try {
-        $db->query($checkTable);
-    } catch (PDOException $e) {
+    $db->exec('CREATE TABLE IF NOT EXISTS app_migrations (version INTEGER PRIMARY KEY)');
+    $needsSecurityMigration = !$db->query('SELECT 1 FROM app_migrations WHERE version = 1')->fetchColumn();
+    if ($needsSecurityMigration) {
         $schema = file_get_contents(__DIR__ . '/schema.sql');
         if ($schema) {
             // Replace AUTOINCREMENT with serial/auto_increment based on driver if needed,
@@ -49,16 +65,12 @@ try {
             if ($dbConnection === 'pgsql') {
                 $schema = str_replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'SERIAL PRIMARY KEY', $schema);
                 $schema = str_replace('DATETIME', 'TIMESTAMP', $schema);
-                $schema = str_replace('BOOLEAN DEFAULT 1', 'BOOLEAN DEFAULT true', $schema);
+                $schema = str_replace('BOOLEAN', 'SMALLINT', $schema);
             } elseif ($dbConnection === 'mysql') {
                 $schema = str_replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'INT AUTO_INCREMENT PRIMARY KEY', $schema);
             }
             $db->exec($schema);
 
-            // Insert default master admin if users table is freshly created
-            $hash = password_hash('admin', PASSWORD_BCRYPT);
-            $stmt = $db->prepare("INSERT INTO users (email, username, password_hash, role, display_name, is_active) VALUES ('admin@example.test', 'admin', ?, 'master_admin', 'Master-Admin', 1)");
-            $stmt->execute([$hash]);
         }
     }
 } catch (PDOException $e) {
@@ -74,6 +86,7 @@ function ensureUserSchema($db, $dbConnection) {
         $tableSql = $db->query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")->fetchColumn();
         if ($tableSql && strpos($tableSql, "'club'") !== false) {
             $db->exec('PRAGMA foreign_keys=off');
+            $db->exec('PRAGMA legacy_alter_table=ON');
             $db->exec('ALTER TABLE users RENAME TO users_old');
             $schema = "
                 CREATE TABLE users (
@@ -100,6 +113,7 @@ function ensureUserSchema($db, $dbConnection) {
             ");
             $stmt->execute(['@example.test']);
             $db->exec('DROP TABLE users_old');
+            $db->exec('PRAGMA legacy_alter_table=OFF');
             $db->exec('PRAGMA foreign_keys=on');
         }
     }
@@ -121,10 +135,10 @@ function ensureUserSchema($db, $dbConnection) {
 
     try {
         $db->exec("UPDATE users SET role = 'user' WHERE role = 'club'");
-        $stmt = $db->prepare("UPDATE users SET email = username || ? WHERE email IS NULL OR email = ''");
+        $emailExpression = $dbConnection === 'mysql' ? 'CONCAT(username, ?)' : 'username || ?';
+        $stmt = $db->prepare("UPDATE users SET email = $emailExpression WHERE email IS NULL OR email = ''");
         $stmt->execute(['@example.test']);
         $db->exec("UPDATE users SET display_name = COALESCE(club_name, username) WHERE display_name IS NULL OR display_name = ''");
-        $db->exec("UPDATE users SET is_active = 1 WHERE password_hash IS NOT NULL AND (is_active IS NULL OR is_active = 0)");
     } catch (PDOException $e) {
         error_log("User Schema Backfill Error: " . $e->getMessage());
     }
@@ -147,7 +161,7 @@ function ensureUserSchema($db, $dbConnection) {
     }
 }
 
-ensureUserSchema($db, $dbConnection);
+if ($needsSecurityMigration) ensureUserSchema($db, $dbConnection);
 
 function ensureDefaultUser($db, $email, $username, $password, $role, $displayName, $contactInfo = null) {
     $stmt = $db->prepare('SELECT * FROM users WHERE email = ? OR username = ?');
@@ -258,22 +272,30 @@ function ensureDemoCamps($db) {
 }
 
 try {
-    ensureDefaultUser($db, 'admin@example.test', 'admin', 'admin', 'master_admin', 'Master-Admin');
-    ensureDefaultUser($db, 'testverein@example.test', 'testverein', 'testverein', 'user', 'Testverein Westsachsen', 'testverein@example.test');
-    ensureDefaultHolidays($db);
+    if (!isProduction() && filter_var(appConfig('SEED_DEMO_DATA', $dbConnection === 'sqlite'), FILTER_VALIDATE_BOOLEAN)) {
+        ensureDefaultUser($db, 'admin@example.test', 'admin', 'admin', 'master_admin', 'Master-Admin');
+        ensureDefaultUser($db, 'testverein@example.test', 'testverein', 'testverein', 'user', 'Testverein Westsachsen', 'testverein@example.test');
+    }
+    if (isProduction() && !(int)$db->query("SELECT COUNT(*) FROM users WHERE role = 'master_admin'")->fetchColumn()) {
+        $bootstrapEmail = (string)appConfig('BOOTSTRAP_ADMIN_EMAIL', '');
+        $bootstrapPassword = appConfig('BOOTSTRAP_ADMIN_PASSWORD', '');
+        if (!filter_var($bootstrapEmail, FILTER_VALIDATE_EMAIL) || !passwordValid($bootstrapPassword) || strlen($bootstrapPassword) < 16) jsonResponse(['error' => 'Einmalige Admin-Einrichtung erforderlich.'], 503);
+        ensureDefaultUser($db, $bootstrapEmail, $bootstrapEmail, $bootstrapPassword, 'master_admin', 'Administration');
+    }
 } catch (PDOException $e) {
     error_log("Default Seed Error: " . $e->getMessage());
 }
 
 // Central logging
 function logError($message) {
-    error_log(date('[Y-m-d H:i:s] ') . $message . "\n", 3, __DIR__ . '/error.log');
+    appLog($message);
 }
 
 function ensureHolidaysSchema($db, $dbConnection) {
     $dateType = $dbConnection === 'pgsql' ? 'TIMESTAMP' : 'DATETIME';
+    $idType = $dbConnection === 'pgsql' ? 'SERIAL PRIMARY KEY' : ($dbConnection === 'mysql' ? 'INT AUTO_INCREMENT PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT');
     $db->exec("CREATE TABLE IF NOT EXISTS holidays (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id $idType,
         name TEXT NOT NULL,
         starts_at $dateType NOT NULL,
         ends_at $dateType NOT NULL
@@ -281,20 +303,25 @@ function ensureHolidaysSchema($db, $dbConnection) {
 }
 
 function ensureCategoriesSchema($db, $dbConnection) {
+    $idType = $dbConnection === 'pgsql' ? 'SERIAL PRIMARY KEY' : ($dbConnection === 'mysql' ? 'INT AUTO_INCREMENT PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT');
     $db->exec("CREATE TABLE IF NOT EXISTS camp_categories (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id $idType,
         camp_id INTEGER NOT NULL,
         category TEXT NOT NULL,
         FOREIGN KEY(camp_id) REFERENCES camps(id) ON DELETE CASCADE
     )");
 }
 
-ensureCategoriesSchema($db, $dbConnection);
-ensureHolidaysSchema($db, $dbConnection);
+if ($needsSecurityMigration) {
+    ensureCategoriesSchema($db, $dbConnection);
+    ensureHolidaysSchema($db, $dbConnection);
+    ensureCampColumns($db, $dbConnection);
+}
 
 try {
     $seedDemoData = configValue($localConfig, 'SEED_DEMO_DATA', $dbConnection === 'sqlite' ? '1' : '0');
-    if (filter_var($seedDemoData, FILTER_VALIDATE_BOOLEAN)) {
+    if ($needsSecurityMigration && !isProduction() && filter_var($seedDemoData, FILTER_VALIDATE_BOOLEAN)) {
+        ensureDefaultHolidays($db);
         ensureDemoCamps($db);
     }
 } catch (PDOException $e) {
@@ -317,7 +344,7 @@ function ensureContactEventsSchema($db, $dbConnection) {
     )");
 }
 
-ensureContactEventsSchema($db, $dbConnection);
+if ($needsSecurityMigration) ensureContactEventsSchema($db, $dbConnection);
 
 function ensureCampColumns($db, $dbConnection) {
     $dateType = $dbConnection === 'pgsql' ? 'TIMESTAMP' : 'DATETIME';
@@ -330,7 +357,7 @@ function ensureCampColumns($db, $dbConnection) {
         'ends_at' => $dateType,
         'price_eur' => $priceType,
         'registration_deadline' => $dateType,
-        'status' => "TEXT DEFAULT 'draft'",
+        'status' => "VARCHAR(20) DEFAULT 'draft'",
     ];
 
     foreach ($columns as $name => $type) {
@@ -351,7 +378,15 @@ function ensureCampColumns($db, $dbConnection) {
     }
 }
 
-ensureCampColumns($db, $dbConnection);
+if ($needsSecurityMigration) {
+    $db->exec('CREATE TABLE IF NOT EXISTS auth_limits (bucket_key VARCHAR(64) PRIMARY KEY, bucket BIGINT NOT NULL, attempts INTEGER NOT NULL)');
+    $db->exec('CREATE TABLE IF NOT EXISTS invitation_delivery (user_id INTEGER PRIMARY KEY, sent_at VARCHAR(19), delivery_status VARCHAR(16) NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)');
+    $db->exec('DELETE FROM sessions');
+    $rows = $db->query('SELECT id, description FROM camps')->fetchAll(PDO::FETCH_ASSOC);
+    $updateDescription = $db->prepare('UPDATE camps SET description = ? WHERE id = ?');
+    foreach ($rows as $row) $updateDescription->execute([sanitizeDescription($row['description'] ?? ''), $row['id']]);
+    $db->exec('INSERT INTO app_migrations (version) VALUES (1)');
+}
 
 // Helper: send JSON response
 function jsonResponse($data, $statusCode = 200) {
@@ -362,7 +397,7 @@ function jsonResponse($data, $statusCode = 200) {
 }
 
 function appBaseUrl() {
-    return rtrim(getenv('APP_BASE_URL') ?: 'http://localhost:5173', '/');
+    return rtrim((string)appConfig('APP_BASE_URL', 'http://localhost:5173'), '/');
 }
 
 function apiBaseUrl() {
@@ -372,7 +407,8 @@ function apiBaseUrl() {
 }
 
 function sendHtmlMail($to, $subject, $html) {
-    $from = getenv('MAIL_FROM') ?: 'noreply@ferienfreizeitportal.local';
+    $from = (string)appConfig('MAIL_FROM', 'noreply@ferienfreizeitportal.local');
+    if (!filter_var($from, FILTER_VALIDATE_EMAIL) || !filter_var($to, FILTER_VALIDATE_EMAIL)) return false;
     $headers = [
         'MIME-Version: 1.0',
         'Content-Type: text/html; charset=UTF-8',
@@ -386,8 +422,7 @@ function sendHtmlMail($to, $subject, $html) {
     }
 
     if (!$sent) {
-        $log = date('[Y-m-d H:i:s] ') . "Mail fallback to $to: $subject\n$html\n\n";
-        file_put_contents(__DIR__ . '/mail.log', $log, FILE_APPEND);
+        logError('Mail delivery failed');
     }
 
     return $sent;
@@ -428,7 +463,7 @@ function contactConfig($config) {
         'rate_limit_max' => max(1, (int)configValue($config, 'CONTACT_RATE_LIMIT_MAX', 5)),
         'rate_limit_window_seconds' => max(60, (int)configValue($config, 'CONTACT_RATE_LIMIT_WINDOW_SECONDS', 900)),
         'min_seconds' => max(1, (int)configValue($config, 'CONTACT_MIN_SECONDS', 3)),
-        'log_salt' => configValue($config, 'CONTACT_LOG_SALT', getenv('APP_KEY') ?: 'ferienfreizeitportal-contact-log'),
+        'log_salt' => configValue($config, 'CONTACT_LOG_SALT', appConfig('APP_KEY', 'ferienfreizeitportal-contact-log')),
     ];
 }
 
@@ -472,12 +507,14 @@ function validateContactPayload($payload) {
 
 function clientIpAddress($server) {
     $candidates = [];
-    if (!empty($server['HTTP_CF_CONNECTING_IP'])) {
+    $trusted = array_filter(array_map('trim', explode(',', (string)appConfig('TRUSTED_PROXIES', ''))));
+    $isTrusted = in_array($server['REMOTE_ADDR'] ?? '', $trusted, true);
+    if ($isTrusted && !empty($server['HTTP_CF_CONNECTING_IP'])) {
         $candidates[] = $server['HTTP_CF_CONNECTING_IP'];
     }
-    if (!empty($server['HTTP_X_FORWARDED_FOR'])) {
-        $parts = explode(',', $server['HTTP_X_FORWARDED_FOR']);
-        $candidates[] = trim($parts[0]);
+    if ($isTrusted && !empty($server['HTTP_X_FORWARDED_FOR'])) {
+        $parts = array_reverse(array_map('trim', explode(',', $server['HTTP_X_FORWARDED_FOR'])));
+        foreach ($parts as $part) if (!in_array($part, $trusted, true)) { $candidates[] = $part; break; }
     }
     if (!empty($server['REMOTE_ADDR'])) {
         $candidates[] = $server['REMOTE_ADDR'];
@@ -507,7 +544,7 @@ function contactMetadata($payload, $server, $config) {
 
 function logContactEvent($db, $metadata, $action, $reason = null) {
     try {
-        $stmt = $db->prepare('INSERT INTO contact_events (request_id, action, reason, ip_hash, user_agent, email_domain, message_length) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        $stmt = $db->prepare('INSERT INTO contact_events (request_id, action, reason, ip_hash, user_agent, email_domain, message_length, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
         $stmt->execute([
             $metadata['request_id'],
             $action,
@@ -516,6 +553,7 @@ function logContactEvent($db, $metadata, $action, $reason = null) {
             $metadata['user_agent'],
             $metadata['email_domain'],
             $metadata['message_length'],
+            date('Y-m-d H:i:s'),
         ]);
     } catch (PDOException $e) {
         logError('Contact event logging failed: ' . $e->getMessage());
@@ -598,10 +636,11 @@ function processContactSubmission($db, $configSource, $data, $server, $mailer = 
     $subject = trim($config['subject_prefix'] . ' Kontaktanfrage von ' . $payload['name']);
     $html = contactMailHtml($payload, $metadata['request_id']);
     if ($mailer) {
-        $mailer($config['to'], $subject, $html);
+        $sent = $mailer($config['to'], $subject, $html);
     } else {
-        sendHtmlMail($config['to'], $subject, $html);
+        $sent = sendHtmlMail($config['to'], $subject, $html);
     }
+    if ($sent === false) return ['status' => 503, 'body' => ['error' => 'Die Nachricht konnte gerade nicht versendet werden. Bitte versuche es später erneut.']];
 
     return ['status' => 200, 'body' => contactGenericResponse()];
 }
@@ -626,11 +665,6 @@ if (defined('PHPUNIT_RUNNING') && PHPUNIT_RUNNING) {
 }
 $requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
-// Built-in server static file serving
-if (php_sapi_name() === 'cli-server' && is_file(__DIR__ . $requestUri)) {
-    return false;
-}
-
 $requestMethod = $_SERVER['REQUEST_METHOD'];
 
 function getAuthorizationHeader() {
@@ -642,7 +676,7 @@ function getAuthorizationHeader() {
         return $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
     }
 
-    $headers = apache_request_headers();
+    $headers = function_exists('apache_request_headers') ? apache_request_headers() : [];
     foreach ($headers as $key => $value) {
         if (strtolower($key) === 'authorization') {
             return $value;
@@ -654,17 +688,16 @@ function getAuthorizationHeader() {
 
 // Auth token validation
 function authenticateUser($db) {
-    $authHeader = getAuthorizationHeader();
-
-    if (preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
-        $token = $matches[1];
+    $token = requestSession();
+    if ($token !== '') {
         $now = date('Y-m-d H:i:s');
 
-        $stmt = $db->prepare('SELECT u.* FROM users u JOIN sessions s ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ?');
-        $stmt->execute([$token, $now]);
+        $stmt = $db->prepare('SELECT u.* FROM users u JOIN sessions s ON u.id = s.user_id WHERE s.token = ? AND s.expires_at > ? AND u.is_active = 1');
+        $stmt->execute([sessionHash($token), $now]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($user) {
+            if (!in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['GET', 'HEAD'], true) && !hash_equals(csrfToken($token), $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '')) jsonResponse(['error' => 'Deine Anmeldung hat sich geändert. Bitte erneut anmelden; deine Eingaben bleiben erhalten.', 'code' => 'csrf_mismatch'], 403);
             return $user;
         }
     }
@@ -706,6 +739,9 @@ function campLifecycleState(array $camp, ?DateTimeImmutable $now = null): string
 }
 
 function campWithLifecycle(array $camp, ?DateTimeImmutable $now = null): array {
+    $camp['description'] = sanitizeDescription($camp['description'] ?? '');
+    foreach (['id', 'club_id', 'min_age', 'max_age'] as $key) if (isset($camp[$key])) $camp[$key] = (int)$camp[$key];
+    foreach (['location_lat', 'location_lng', 'price_eur'] as $key) if (isset($camp[$key])) $camp[$key] = (float)$camp[$key];
     $camp['lifecycle_state'] = campLifecycleState($camp, $now);
     return $camp;
 }
@@ -721,48 +757,6 @@ function campWithRelations($db, array $camp, ?DateTimeImmutable $now = null): ar
     $camp['type'] = !empty($camp['categories']) ? $camp['categories'][0] : $camp['type'];
 
     return campWithLifecycle($camp, $now);
-}
-
-function saveUploadedCampImages($db, $campId) {
-    if (!isset($_FILES['images'])) {
-        return [];
-    }
-
-    $stmtImg = $db->prepare('INSERT INTO camp_images (camp_id, image_url) VALUES (?, ?)');
-    $files = $_FILES['images'];
-    $allowedMimeTypes = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
-    $savedImages = [];
-
-    for ($i = 0; $i < count($files['name']); $i++) {
-        if ($files['error'][$i] !== UPLOAD_ERR_OK) {
-            continue;
-        }
-
-        $finfo = finfo_open(FILEINFO_MIME_TYPE);
-        $mimeType = finfo_file($finfo, $files['tmp_name'][$i]);
-        finfo_close($finfo);
-
-        if (!array_key_exists($mimeType, $allowedMimeTypes)) {
-            continue;
-        }
-
-        $ext = $allowedMimeTypes[$mimeType];
-        $filename = bin2hex(random_bytes(16)) . '.' . $ext;
-
-        $uploadDir = __DIR__ . '/uploads';
-        if (!is_dir($uploadDir)) {
-            mkdir($uploadDir, 0755, true);
-        }
-
-        $destination = $uploadDir . '/' . $filename;
-        if (move_uploaded_file($files['tmp_name'][$i], $destination)) {
-            $imageUrl = '/uploads/' . $filename;
-            $stmtImg->execute([$campId, $imageUrl]);
-            $savedImages[] = $imageUrl;
-        }
-    }
-
-    return $savedImages;
 }
 
 function saveCampCategories($db, $campId, $categories) {
@@ -801,9 +795,11 @@ function validateCampDates($data) {
 
 try {
     if ($requestUri === '/api/login' && $requestMethod === 'POST') {
-        $data = json_decode(file_get_contents('php://input'), true);
-        $username = trim($data['username'] ?? '');
+        $data = readJsonBody();
+        $username = requireText($data, 'username', 254);
         $password = $data['password'] ?? '';
+        authRateLimit($db, 'login', $username);
+        if (!is_string($password) || strlen($password) > 72) jsonResponse(['error' => 'Ungültige Zugangsdaten.'], 401);
 
         $stmt = $db->prepare('SELECT * FROM users WHERE username = ? OR email = ?');
         $stmt->execute([$username, $username]);
@@ -814,30 +810,35 @@ try {
             $expiresAt = date('Y-m-d H:i:s', strtotime('+24 hours'));
 
             $stmt = $db->prepare('INSERT INTO sessions (user_id, token, expires_at) VALUES (?, ?, ?)');
-            $stmt->execute([$user['id'], $token, $expiresAt]);
+            $stmt->execute([$user['id'], sessionHash($token), $expiresAt]);
+            if (requestSession()) $db->prepare('DELETE FROM sessions WHERE token = ?')->execute([sessionHash(requestSession())]);
+            sessionCookie($token, strtotime($expiresAt));
 
-            jsonResponse(['token' => $token, 'user' => userPayload($user)]);
+            jsonResponse(['csrf_token' => csrfToken($token), 'user' => userPayload($user)]);
         } else {
-            logError("Failed login attempt for username: $username");
-            jsonResponse(['error' => 'Invalid credentials'], 401);
+            logError('Failed login');
+            jsonResponse(['error' => 'Ungültige Zugangsdaten.'], 401);
         }
     }
     elseif ($requestUri === '/api/contact' && $requestMethod === 'POST') {
-        $data = json_decode(file_get_contents('php://input'), true) ?? [];
+        $data = readJsonBody();
         $result = processContactSubmission($db, $localConfig, $data, $_SERVER);
         jsonResponse($result['body'], $result['status']);
     }
     elseif ($requestUri === '/api/password/request-reset' && $requestMethod === 'POST') {
-        $data = json_decode(file_get_contents('php://input'), true) ?? [];
-        $email = trim($data['email'] ?? '');
+        $data = readJsonBody();
+        $email = strtolower(requireText($data, 'email', 254));
+        authRateLimit($db, 'reset', $email, 5);
 
         if ($email !== '') {
-            $stmt = $db->prepare('SELECT * FROM users WHERE email = ?');
+            $stmt = $db->prepare('SELECT * FROM users WHERE email = ? AND is_active = 1');
             $stmt->execute([$email]);
             $targetUser = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($targetUser) {
+                beginWrite($db);
                 $token = createPasswordToken($db, $targetUser['id'], 'reset');
+                $db->commit();
                 $link = appBaseUrl() . '/passwort-setzen?token=' . urlencode($token) . '&purpose=reset';
                 $html = passwordMailHtml(
                     'Passwort zurücksetzen',
@@ -852,18 +853,19 @@ try {
         jsonResponse(['message' => 'Wenn ein Konto zu dieser E-Mail existiert, wurde eine Nachricht versendet.']);
     }
     elseif ($requestUri === '/api/password/set' && $requestMethod === 'POST') {
-        $data = json_decode(file_get_contents('php://input'), true) ?? [];
+        $data = readJsonBody();
         $token = $data['token'] ?? '';
         $password = $data['password'] ?? '';
         $purpose = $data['purpose'] ?? '';
 
-        if (!in_array($purpose, ['invite', 'reset'], true) || strlen($password) < 8) {
+        if (!in_array($purpose, ['invite', 'reset'], true) || !passwordValid($password) || !is_string($token) || !preg_match('/^[a-f0-9]{64}$/D', $token)) {
             jsonResponse(['error' => 'Ungültige Anfrage oder Passwort zu kurz'], 400);
         }
 
         $tokenHash = hash('sha256', $token);
         $now = date('Y-m-d H:i:s');
-        $stmt = $db->prepare('SELECT pt.*, u.id AS user_id FROM password_tokens pt JOIN users u ON u.id = pt.user_id WHERE pt.token_hash = ? AND pt.purpose = ? AND pt.used_at IS NULL AND pt.expires_at > ?');
+        beginWrite($db);
+        $stmt = $db->prepare("SELECT pt.*, u.id AS user_id FROM password_tokens pt JOIN users u ON u.id = pt.user_id WHERE pt.token_hash = ? AND pt.purpose = ? AND pt.used_at IS NULL AND pt.expires_at > ? AND ((pt.purpose = 'reset' AND u.is_active = 1) OR (pt.purpose = 'invite' AND u.is_active = 0))");
         $stmt->execute([$tokenHash, $purpose, $now]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -872,6 +874,13 @@ try {
         }
 
         $passwordHash = password_hash($password, PASSWORD_BCRYPT);
+        // Conditional claim makes the token single-use even under concurrent requests.
+        $claim = $db->prepare('UPDATE password_tokens SET used_at = ? WHERE id = ? AND used_at IS NULL AND expires_at > ?');
+        $claim->execute([$now, $row['id'], $now]);
+        if ($claim->rowCount() !== 1) {
+            $db->rollBack();
+            jsonResponse(['error' => 'Der Link wurde bereits verwendet.'], 400);
+        }
         $stmt = $db->prepare('UPDATE users SET password_hash = ?, is_active = 1, updated_at = ? WHERE id = ?');
         $stmt->execute([$passwordHash, $now, $row['user_id']]);
 
@@ -880,6 +889,9 @@ try {
 
         $stmt = $db->prepare('UPDATE password_tokens SET used_at = ? WHERE id = ?');
         $stmt->execute([$now, $row['id']]);
+        $db->prepare('UPDATE password_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL')->execute([$now, $row['user_id']]);
+        $db->commit();
+        sessionCookie(null);
 
         jsonResponse(['message' => 'Passwort wurde gespeichert']);
     }
@@ -889,36 +901,37 @@ try {
             jsonResponse(['error' => 'Unauthorized'], 401);
         }
 
-        $data = json_decode(file_get_contents('php://input'), true) ?? [];
+        $data = readJsonBody();
         $currentPassword = $data['current_password'] ?? '';
         $newPassword = $data['new_password'] ?? '';
 
-        if (!password_verify($currentPassword, $user['password_hash'] ?? '')) {
+        authRateLimit($db, 'password-change', (string)$user['id']);
+        if (!is_string($currentPassword) || strlen($currentPassword) > 72 || !password_verify($currentPassword, $user['password_hash'] ?? '')) {
             jsonResponse(['error' => 'Das aktuelle Passwort ist nicht korrekt'], 400);
         }
 
-        if (strlen($newPassword) < 8) {
+        if (!passwordValid($newPassword)) {
             jsonResponse(['error' => 'Das neue Passwort muss mindestens 8 Zeichen lang sein'], 400);
         }
 
         $now = date('Y-m-d H:i:s');
         $passwordHash = password_hash($newPassword, PASSWORD_BCRYPT);
+        beginWrite($db);
         $stmt = $db->prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?');
         $stmt->execute([$passwordHash, $now, $user['id']]);
 
         $stmt = $db->prepare('DELETE FROM sessions WHERE user_id = ?');
         $stmt->execute([$user['id']]);
+        $db->prepare('UPDATE password_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL')->execute([$now, $user['id']]);
+        $db->commit();
+        sessionCookie(null);
 
         jsonResponse(['message' => 'Passwort wurde geändert. Bitte melde dich erneut an.']);
     }
     elseif ($requestUri === '/api/logout' && $requestMethod === 'POST') {
-        $authHeader = getAuthorizationHeader();
-
-        if (preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
-            $token = $matches[1];
-            $stmt = $db->prepare('DELETE FROM sessions WHERE token = ?');
-            $stmt->execute([$token]);
-        }
+        authenticateUser($db);
+        if (requestSession()) $db->prepare('DELETE FROM sessions WHERE token = ?')->execute([sessionHash(requestSession())]);
+        sessionCookie(null);
         jsonResponse(['message' => 'Logged out']);
     }
     elseif ($requestUri === '/api/holidays' && $requestMethod === 'GET') {
@@ -930,13 +943,20 @@ try {
         if (!$user || !isAdminRole($user)) {
             jsonResponse(['error' => 'Unauthorized'], 401);
         }
-        $data = json_decode(file_get_contents('php://input'), true);
-        if (empty($data['name']) || empty($data['starts_at']) || empty($data['ends_at'])) {
-            jsonResponse(['error' => 'Fehlende Felder'], 400);
-        }
+        $data = readJsonBody();
+        $name = requireText($data, 'name', 120);
+        $start = requireText($data, 'starts_at', 10);
+        $end = requireText($data, 'ends_at', 10);
+        if (!$name || !normalizedDate($start . ' 00:00:00') || !normalizedDate($end . ' 23:59:59') || $end < $start) jsonResponse(['error' => 'Bitte Name und gültigen Ferienzeitraum angeben.'], 422);
+        beginWrite($db);
+        $overlap = $db->prepare('SELECT COUNT(*) FROM holidays WHERE name = ? OR (DATE(starts_at) <= ? AND DATE(ends_at) >= ?)');
+        $overlap->execute([$name, $end, $start]);
+        if ((int)$overlap->fetchColumn()) { $db->rollBack(); jsonResponse(['error' => 'Diese Ferien überschneiden sich mit einem bestehenden Eintrag oder der Name ist bereits vergeben.'], 409); }
         $stmt = $db->prepare('INSERT INTO holidays (name, starts_at, ends_at) VALUES (?, ?, ?)');
-        $stmt->execute([$data['name'], $data['starts_at'], $data['ends_at']]);
-        jsonResponse(['success' => true, 'id' => $db->lastInsertId()]);
+        $stmt->execute([$name, $start . ' 00:00:00', $end . ' 23:59:59']);
+        $holidayId = (int)$db->lastInsertId();
+        $db->commit();
+        jsonResponse(['success' => true, 'id' => $holidayId]);
     }
     elseif (preg_match('/^\/api\/admin\/holidays\/(\d+)$/', $requestUri, $matches) && $requestMethod === 'DELETE') {
         $user = authenticateUser($db);
@@ -959,13 +979,14 @@ try {
         if ($requestMethod === 'POST') {
             $data = $_POST;
             if (empty($data)) {
-                $data = json_decode(file_get_contents('php://input'), true) ?? [];
+                $data = readJsonBody();
             }
 
-            $dateError = validateCampDates($data);
-            if ($dateError) {
-                jsonResponse(['error' => $dateError], 400);
-            }
+            if (normalizeRole($user['role']) !== 'user') jsonResponse(['error' => 'Nur Vereine können eigene Freizeiten anlegen.'], 403);
+            $data = requireValidCamp($data, $user);
+            $validatedImages = validateUploadedImages($db);
+            beginWrite($db);
+            $createdPaths = [];
 
             $stmt = $db->prepare('INSERT INTO camps (club_id, title, min_age, max_age, description, location_text, location_lat, location_lng, type, starts_at, ends_at, price_eur, registration_deadline, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             $stmt->execute([
@@ -975,42 +996,39 @@ try {
             ]);
             $newCampId = $db->lastInsertId();
 
-            saveUploadedCampImages($db, $newCampId);
+            persistUploadedImages($db, $newCampId, $validatedImages, $createdPaths);
             saveCampCategories($db, $newCampId, $data['categories'] ?? $data['type'] ?? []);
 
-            jsonResponse(['message' => 'Camp created successfully', 'id' => $newCampId]);
+            $db->commit();
+            jsonResponse(['message' => 'Freizeit gespeichert.', 'id' => (int)$newCampId], 201);
         }
         elseif ($requestMethod === 'PUT' && $campId) {
-            $data = json_decode(file_get_contents('php://input'), true) ?? [];
-
-            if (!getCampForUser($db, $campId, $user)) {
-                jsonResponse(['error' => 'Forbidden'], 403);
-            }
-
-            $dateError = validateCampDates($data);
-            if ($dateError) {
-                jsonResponse(['error' => $dateError], 400);
-            }
-
+            $data = readJsonBody();
+            beginWrite($db);
+            $existing = getCampForUser($db, $campId, $user);
+            if (!$existing) jsonResponse(['error' => 'Nicht erlaubt.'], 403);
+            $ownerStmt = $db->prepare('SELECT * FROM users WHERE id = ?');
+            $ownerStmt->execute([$existing['club_id']]);
+            $data = requireValidCamp($data, $ownerStmt->fetch(PDO::FETCH_ASSOC), $existing);
             $stmt = $db->prepare('UPDATE camps SET title = ?, min_age = ?, max_age = ?, description = ?, location_text = ?, location_lat = ?, location_lng = ?, type = ?, starts_at = ?, ends_at = ?, price_eur = ?, registration_deadline = ?, status = ? WHERE id = ?');
             $stmt->execute([
-                $data['title'] ?? '', $data['min_age'] ?? null, $data['max_age'] ?? null, $data['description'] ?? '',
-                $data['location_text'] ?? '', $data['location_lat'] ?? null, $data['location_lng'] ?? null, $data['type'] ?? '', $data['starts_at'] ?? null,
-                $data['ends_at'] ?? null, $data['price_eur'] ?? null, $data['registration_deadline'] ?? null,
-                $data['status'] ?? 'draft', $campId
+                $data['title'], $data['min_age'], $data['max_age'], $data['description'],
+                $data['location_text'], $data['location_lat'], $data['location_lng'], $data['type'], $data['starts_at'],
+                $data['ends_at'], $data['price_eur'], $data['registration_deadline'], $data['status'], $campId
             ]);
-
-            saveCampCategories($db, $campId, $data['categories'] ?? $data['type'] ?? []);
-
-            jsonResponse(['message' => 'Camp updated successfully']);
+            saveCampCategories($db, $campId, $data['categories']);
+            $db->commit();
+            jsonResponse(['message' => 'Freizeit gespeichert.']);
         }
         elseif ($requestMethod === 'DELETE' && $campId) {
             if (!getCampForUser($db, $campId, $user)) {
                 jsonResponse(['error' => 'Forbidden'], 403);
             }
 
-            $stmt = $db->prepare('DELETE FROM camps WHERE id = ?');
-            $stmt->execute([$campId]);
+            beginWrite($db);
+            $urls = deleteCampRecords($db, [$campId]);
+            $db->commit();
+            removeUnreferencedImages($db, $urls);
             jsonResponse(['message' => 'Camp deleted successfully']);
         }
     }
@@ -1020,6 +1038,7 @@ try {
             jsonResponse(['error' => 'Unauthorized'], 401);
         }
 
+        beginWrite($db);
         $sourceCamp = getCampForUser($db, $matches[1], $user);
         if (!$sourceCamp) {
             jsonResponse(['error' => 'Forbidden'], 403);
@@ -1030,8 +1049,6 @@ try {
         }
 
         try {
-            $db->beginTransaction();
-
             $copyTitle = trim((string)$sourceCamp['title']);
             $copyTitle = $copyTitle === '' ? 'Freizeit' : $copyTitle;
             $stmt = $db->prepare('INSERT INTO camps (club_id, title, min_age, max_age, description, location_text, location_lat, location_lng, type, starts_at, ends_at, price_eur, registration_deadline, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
@@ -1076,7 +1093,11 @@ try {
             jsonResponse(['error' => 'Forbidden'], 403);
         }
 
-        $savedImages = saveUploadedCampImages($db, $campId);
+        beginWrite($db);
+        $validatedImages = validateUploadedImages($db, $campId);
+        $createdPaths = [];
+        $savedImages = persistUploadedImages($db, $campId, $validatedImages, $createdPaths);
+        $db->commit();
         jsonResponse(['message' => 'Images uploaded successfully', 'images' => $savedImages]);
     }
     elseif (preg_match('/^\/api\/camps\/(\d+)\/images$/', $requestUri, $matches) && $requestMethod === 'DELETE') {
@@ -1085,13 +1106,14 @@ try {
             jsonResponse(['error' => 'Unauthorized'], 401);
         }
 
+        beginWrite($db);
         $campId = $matches[1];
         if (!getCampForUser($db, $campId, $user)) {
             jsonResponse(['error' => 'Forbidden'], 403);
         }
 
-        $data = json_decode(file_get_contents('php://input'), true) ?? [];
-        $imageUrl = $data['image_url'] ?? '';
+        $data = readJsonBody();
+        $imageUrl = requireText($data, 'image_url', 255);
 
         if (!$imageUrl) {
             jsonResponse(['error' => 'image_url is required'], 400);
@@ -1107,16 +1129,10 @@ try {
 
         $deleteStmt = $db->prepare('DELETE FROM camp_images WHERE camp_id = ? AND image_url = ?');
         $deleteStmt->execute([$campId, $imageUrl]);
+        $db->commit();
+        removeUnreferencedImages($db, [$imageUrl]);
 
-        if (str_starts_with($imageUrl, '/uploads/')) {
-            $filePath = realpath(__DIR__ . $imageUrl);
-            $uploadDir = realpath(__DIR__ . '/uploads');
-            if ($filePath && $uploadDir && str_starts_with($filePath, $uploadDir) && is_file($filePath)) {
-                unlink($filePath);
-            }
-        }
-
-        jsonResponse(['message' => 'Image deleted successfully']);
+        jsonResponse(['message' => 'Bild gelöscht.']);
     }
     elseif ($requestUri === '/api/me' && $requestMethod === 'GET') {
         $user = authenticateUser($db);
@@ -1124,7 +1140,7 @@ try {
             jsonResponse(['error' => 'Unauthorized'], 401);
         }
 
-        jsonResponse(userPayload($user));
+        jsonResponse([...userPayload($user), 'csrf_token' => csrfToken(requestSession())]);
     }
     elseif ($requestUri === '/api/me' && $requestMethod === 'PUT') {
         $user = authenticateUser($db);
@@ -1132,9 +1148,9 @@ try {
             jsonResponse(['error' => 'Unauthorized'], 401);
         }
 
-        $data = json_decode(file_get_contents('php://input'), true) ?? [];
-        $displayName = trim($data['display_name'] ?? '');
-        $contactInfo = trim($data['contact_info'] ?? '');
+        $data = readJsonBody();
+        $displayName = requireText($data, 'display_name', 200);
+        $contactInfo = requireText($data, 'contact_info', 2000);
 
         if ($displayName === '') {
             jsonResponse(['error' => 'Name ist erforderlich'], 400);
@@ -1149,15 +1165,14 @@ try {
     }
     elseif ($requestUri === '/api/admin/users' && $requestMethod === 'POST') {
         $user = authenticateUser($db);
-        if (!$user || !isAdminRole($user)) {
-            jsonResponse(['error' => 'Forbidden'], 403);
-        }
+        if (!$user) jsonResponse(['error' => 'Bitte melde dich erneut an.'], 401);
+        if (!isAdminRole($user)) jsonResponse(['error' => 'Nicht erlaubt.'], 403);
 
-        $data = json_decode(file_get_contents('php://input'), true) ?? [];
-        $email = strtolower(trim($data['email'] ?? ''));
-        $displayName = trim($data['display_name'] ?? ($data['club_name'] ?? ''));
+        $data = readJsonBody();
+        $email = strtolower(requireText($data, 'email', 254));
+        $displayName = requireText($data, 'display_name', 200);
         $role = normalizeRole($data['role'] ?? 'user');
-        $contactInfo = trim($data['contact_info'] ?? '');
+        $contactInfo = requireText($data, 'contact_info', 2000);
 
         if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL) || !$displayName) {
             jsonResponse(['error' => 'E-Mail und Name sind erforderlich'], 400);
@@ -1173,29 +1188,32 @@ try {
             $stmt = $db->prepare('INSERT INTO users (email, username, password_hash, role, display_name, club_name, contact_info, is_active) VALUES (?, ?, NULL, ?, ?, ?, ?, 0)');
             $stmt->execute([$email, $username, $role, $displayName, $displayName, $contactInfo]);
             $newUserId = $db->lastInsertId();
-            $token = createPasswordToken($db, $newUserId, 'invite');
-            $link = appBaseUrl() . '/passwort-setzen?token=' . urlencode($token) . '&purpose=invite';
-            $html = passwordMailHtml(
-                'Einladung zum Ferienfreizeitportal',
-                $displayName,
-                $link,
-                'du wurdest für das Ferienfreizeitportal eingeladen. Über diesen Link legst du dein Passwort fest und aktivierst dein Konto. Der Link ist sieben Tage gültig.'
-            );
-            sendHtmlMail($email, 'Einladung zum Ferienfreizeitportal', $html);
-
-            jsonResponse(['message' => 'Nutzer wurde eingeladen', 'id' => $newUserId]);
+            $sent = sendInvitation($db, ['id' => $newUserId, 'email' => $email, 'display_name' => $displayName]);
+            jsonResponse(['message' => $sent ? 'Einladung versendet.' : 'Konto angelegt, E-Mail-Versand fehlgeschlagen. Bitte die Einladung erneut senden.', 'delivery_status' => $sent ? 'sent' : 'failed', 'id' => (int)$newUserId], 201);
         } catch (PDOException $e) {
-            if ($e->getCode() == 23000) { // Integrity constraint violation (UNIQUE constraint)
+            if (in_array((string)$e->getCode(), ['23000', '23505'], true)) { // Integrity constraint violation (UNIQUE constraint)
                 jsonResponse(['error' => 'E-Mail ist bereits vergeben'], 400);
             }
             throw $e;
         }
     }
+    elseif (preg_match('~^/api/admin/users/(\\d+)/resend-invite$~', $requestUri, $matches) && $requestMethod === 'POST') {
+        $user = authenticateUser($db);
+        if (!$user) jsonResponse(['error' => 'Bitte anmelden.'], 401);
+        if (!isAdminRole($user)) jsonResponse(['error' => 'Nicht erlaubt.'], 403);
+        $stmt = $db->prepare('SELECT * FROM users WHERE id = ?');
+        $stmt->execute([$matches[1]]);
+        $target = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$target || (!isMasterAdmin($user) && $target['role'] !== 'user')) jsonResponse(['error' => 'Nicht erlaubt.'], 403);
+        if ((int)$target['is_active']) jsonResponse(['error' => 'Dieses Konto ist bereits aktiviert.'], 422);
+        authRateLimit($db, 'invite', (string)$target['id'], 3);
+        $sent = sendInvitation($db, $target);
+        jsonResponse(['message' => $sent ? 'Einladung erneut versendet.' : 'Versand fehlgeschlagen. Bitte die Mailkonfiguration prüfen.', 'delivery_status' => $sent ? 'sent' : 'failed'], $sent ? 200 : 503);
+    }
     elseif ($requestUri === '/api/admin/users' && $requestMethod === 'GET') {
         $user = authenticateUser($db);
-        if (!$user || !isAdminRole($user)) {
-            jsonResponse(['error' => 'Forbidden'], 403);
-        }
+        if (!$user) jsonResponse(['error' => 'Bitte melde dich erneut an.'], 401);
+        if (!isAdminRole($user)) jsonResponse(['error' => 'Nicht erlaubt.'], 403);
 
         $query = 'SELECT id, email, username, role, display_name, club_name, contact_info, is_active FROM users';
         $params = [];
@@ -1209,6 +1227,11 @@ try {
 
         foreach ($users as &$listedUser) {
             $listedUser['role'] = normalizeRole($listedUser['role']);
+            $listedUser['id'] = (int)$listedUser['id'];
+            $listedUser['is_active'] = (int)$listedUser['is_active'];
+            $delivery = $db->prepare('SELECT sent_at, delivery_status FROM invitation_delivery WHERE user_id = ?');
+            $delivery->execute([$listedUser['id']]);
+            $listedUser += $delivery->fetch(PDO::FETCH_ASSOC) ?: ['delivery_status' => null, 'sent_at' => null];
             $countStmt = $db->prepare('SELECT COUNT(*) FROM camps WHERE club_id = ?');
             $countStmt->execute([$listedUser['id']]);
             $listedUser['camp_count'] = (int)$countStmt->fetchColumn();
@@ -1218,9 +1241,8 @@ try {
     }
     elseif (preg_match('/^\/api\/admin\/users\/(\d+)$/', $requestUri, $matches) && in_array($requestMethod, ['PUT', 'DELETE'])) {
         $user = authenticateUser($db);
-        if (!$user || !isAdminRole($user)) {
-            jsonResponse(['error' => 'Forbidden'], 403);
-        }
+        if (!$user) jsonResponse(['error' => 'Bitte melde dich erneut an.'], 401);
+        if (!isAdminRole($user)) jsonResponse(['error' => 'Nicht erlaubt.'], 403);
 
         $targetId = (int)$matches[1];
         if ($targetId === (int)$user['id']) {
@@ -1238,8 +1260,8 @@ try {
         }
 
         if ($requestMethod === 'DELETE') {
-            $data = json_decode(file_get_contents('php://input'), true) ?? [];
-            $confirmation = strtolower(trim($data['confirm'] ?? ''));
+            $data = readJsonBody();
+            $confirmation = strtolower(requireText($data, 'confirm', 254));
             $expectedEmail = strtolower(trim($targetUser['email'] ?? ''));
             $expectedName = strtolower(trim($targetUser['display_name'] ?? ''));
 
@@ -1247,14 +1269,22 @@ try {
                 jsonResponse(['error' => 'Zum Löschen muss die E-Mail-Adresse oder der Name exakt bestätigt werden'], 400);
             }
 
+            if ($targetUser['role'] === 'master_admin') jsonResponse(['error' => 'Master-Administratoren können hier nicht gelöscht werden.'], 403);
+            beginWrite($db);
+            $campStmt = $db->prepare('SELECT id FROM camps WHERE club_id = ?');
+            $campStmt->execute([$targetId]);
+            $urls = deleteCampRecords($db, $campStmt->fetchAll(PDO::FETCH_COLUMN));
+            foreach (['sessions', 'password_tokens', 'invitation_delivery'] as $table) $db->prepare("DELETE FROM $table WHERE user_id = ?")->execute([$targetId]);
             $stmt = $db->prepare('DELETE FROM users WHERE id = ?');
             $stmt->execute([$targetId]);
+            $db->commit();
+            removeUnreferencedImages($db, $urls);
             jsonResponse(['message' => 'Nutzer gelöscht']);
         }
 
-        $data = json_decode(file_get_contents('php://input'), true) ?? [];
-        $displayName = trim($data['display_name'] ?? '');
-        $contactInfo = trim($data['contact_info'] ?? '');
+        $data = readJsonBody();
+        $displayName = requireText($data, 'display_name', 200);
+        $contactInfo = requireText($data, 'contact_info', 2000);
         $role = normalizeRole($data['role'] ?? $targetUser['role']);
 
         if ($displayName === '' || !in_array($role, ['admin', 'user'], true) || ($role === 'admin' && !isMasterAdmin($user))) {
@@ -1267,7 +1297,7 @@ try {
     }
     elseif (preg_match('/^\/api\/camps\/(\d+)$/', $requestUri, $matches) && $requestMethod === 'GET') {
         $campId = $matches[1];
-        $stmt = $db->prepare('SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id WHERE c.id = ?');
+        $stmt = $db->prepare('SELECT c.*, u.club_name, u.contact_info, u.username, u.is_active AS owner_active FROM camps c JOIN users u ON c.club_id = u.id WHERE c.id = ?');
         $stmt->execute([$campId]);
         $camp = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -1275,20 +1305,28 @@ try {
             jsonResponse(['error' => 'Camp not found'], 404);
         }
 
-        jsonResponse(campWithRelations($db, $camp));
+        $viewer = authenticateUser($db);
+        $canManage = $viewer && (isAdminRole($viewer) || (int)$viewer['id'] === (int)$camp['club_id']);
+        if ((!campIsPublic($camp) || !(int)$camp['owner_active']) && !$canManage) jsonResponse(['error' => 'Freizeit nicht gefunden.'], 404);
+        $result = campWithRelations($db, $camp);
+        jsonResponse($canManage ? $result : publicCampPayload($result));
     }
     elseif ($requestUri === '/api/camps' && $requestMethod === 'GET') {
         $query = 'SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id';
         $params = [];
         $whereConditions = [];
         $currentUser = authenticateUser($db);
+        foreach ($_GET as $value) if (!is_string($value) || strlen($value) > 1000) jsonResponse(['error' => 'Ungültiger Suchfilter.'], 400);
+        if ((isset($_GET['manage']) || isset($_GET['all'])) && !$currentUser) jsonResponse(['error' => 'Bitte melde dich erneut an.'], 401);
+        $internalView = $currentUser && ((isset($_GET['all']) && $_GET['all'] === '1' && isAdminRole($currentUser)) || (isset($_GET['club_id']) && ((int)$_GET['club_id'] === (int)$currentUser['id'] || isAdminRole($currentUser))));
+        if (!$internalView) $whereConditions[] = 'u.is_active = 1';
 
         if (isset($_GET['club_id'])) {
             $clubId = (int)$_GET['club_id'];
             $whereConditions[] = 'c.club_id = ?';
             $params[] = $clubId;
             if (!$currentUser || (!isAdminRole($currentUser) && (int)$currentUser['id'] !== $clubId)) {
-                $whereConditions[] = 'c.status IN ("published", "fully_booked")';
+                $whereConditions[] = "c.status IN ('published', 'fully_booked')";
                 $whereConditions[] = '(c.ends_at IS NULL OR c.ends_at >= ?)';
                 $params[] = (new DateTimeImmutable('now', new DateTimeZone('Europe/Berlin')))->format('Y-m-d H:i:s');
             }
@@ -1297,7 +1335,7 @@ try {
                 jsonResponse(['error' => 'Forbidden'], 403);
             }
         } else {
-            $whereConditions[] = 'c.status IN ("published", "fully_booked")';
+            $whereConditions[] = "c.status IN ('published', 'fully_booked')";
             $whereConditions[] = '(c.ends_at IS NULL OR c.ends_at >= ?)';
             $params[] = (new DateTimeImmutable('now', new DateTimeZone('Europe/Berlin')))->format('Y-m-d H:i:s');
         }
@@ -1380,12 +1418,14 @@ try {
             unset($camp);
         }
 
-        jsonResponse($camps);
+        jsonResponse($internalView ? $camps : array_map('publicCampPayload', $camps));
     }
     else {
         jsonResponse(['error' => 'Not Found'], 404);
     }
-} catch (Exception $e) {
-    logError($e->getMessage());
+} catch (Throwable $e) {
+    if ($db->inTransaction()) $db->rollBack();
+    foreach ($createdPaths ?? [] as $path) if (is_file($path)) unlink($path);
+    logError(get_class($e) . ': request failed');
     jsonResponse(['error' => 'Internal Server Error'], 500);
 }

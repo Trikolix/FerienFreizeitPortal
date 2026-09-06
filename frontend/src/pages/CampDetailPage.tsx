@@ -1,5 +1,7 @@
+import { safeHtml } from '../utils/safeHtml';
+import { apiFetch } from '../utils/api';
 import React, { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useLocation } from 'react-router-dom';
 import { ArrowLeft, CalendarClock, CalendarDays, Euro, MapPin, Tag, UsersRound } from 'lucide-react';
 import { ImageGallery } from '../components/ImageGallery';
 
@@ -65,17 +67,22 @@ const getHolidayForCamp = (camp: Camp, holidays: Holiday[]) => holidays.find((ho
 
 export const CampDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const location = useLocation();
+  const returnSearch = typeof location.state?.search === 'string' ? location.state.search : '';
   const [camp, setCamp] = useState<Camp | null>(null);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    const controller = new AbortController();
     const loadData = async () => {
+      setLoading(true);
+      setError('');
       try {
         const [campRes, holidaysRes] = await Promise.all([
-          fetch(`/api/camps/${id}`),
-          fetch('/api/holidays')
+          apiFetch(`/api/camps/${id}`, { signal: controller.signal }),
+          apiFetch('/api/holidays', { signal: controller.signal }).catch(() => new Response('[]'))
         ]);
         
         if (!campRes.ok) throw new Error('Freizeit nicht gefunden');
@@ -85,12 +92,13 @@ export const CampDetailPage: React.FC = () => {
         setCamp(campData);
         setHolidays(holidaysData);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Fehler beim Laden');
+        if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Fehler beim Laden');
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
     void loadData();
+    return () => controller.abort();
   }, [id]);
 
   if (loading) return <div className="empty-state"><h2>Laden...</h2></div>;
@@ -100,7 +108,7 @@ export const CampDetailPage: React.FC = () => {
 
   return (
     <article className="camp-detail-page">
-      <Link className="secondary-action detail-back-link" to="/">
+      <Link className="secondary-action detail-back-link" to={returnSearch ? `/?${returnSearch}` : '/'}>
         <ArrowLeft size={17} />
         Zur Suche
       </Link>
@@ -123,7 +131,7 @@ export const CampDetailPage: React.FC = () => {
           </div>
           <h1>{camp.title}</h1>
           <p className="provider">{camp.club_name}</p>
-          <div className="detail-description" dangerouslySetInnerHTML={{ __html: camp.description }} />
+          <div className="detail-description" dangerouslySetInnerHTML={{ __html: safeHtml(camp.description) }} />
         </div>
 
         <aside className="detail-sidebar" aria-label="Freizeitdetails">
@@ -179,7 +187,9 @@ export const CampDetailPage: React.FC = () => {
           <div className="detail-contact">
             <span>Anbieter</span>
             <strong>{camp.club_name}</strong>
-            <p>{camp.contact_info || camp.username || 'Keine Kontaktinformation hinterlegt.'}</p>
+            <p>{camp.contact_info || 'Keine Kontaktinformation hinterlegt.'}</p>
+            <p>Anmeldung und Buchung erfolgen direkt beim Anbieter.</p>
+            {camp.status === 'fully_booked' && <p role="status">Diese Freizeit ist ausgebucht.</p>}
           </div>
         </aside>
       </section>

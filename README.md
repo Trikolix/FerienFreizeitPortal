@@ -1,93 +1,82 @@
-# Westsachsen Ferienfreizeiten - Webportal
+# Westsachsen Ferienfreizeiten
 
-Dieses Projekt ist ein regionales Webportal für Ferienfreizeiten in Westsachsen. Jugendvereine können hier ihre Angebote verwalten und Endnutzer können nach diesen filtern (inkl. Kartenansicht).
+Regionales Portal für Ferienfreizeiten: Vereine pflegen ihre Angebote, Familien suchen nach Alter, Kategorie, Termin und auf der Karte.
 
-## Voraussetzungen
+## Lokal entwickeln
 
-* **Lokal (ohne Docker):** Node.js >= 18, PHP >= 8.2 (mit SQLite Erweiterung)
-* **Mit Docker:** Docker und Docker Compose
+Voraussetzungen: Node.js 24, Composer, PHP 8.3+ mit PDO/SQLite, DOM, Fileinfo, Mbstring und GD (JPEG/PNG/WebP).
 
-## Lokale Entwicklung (Schnellstart)
-
-Das Projekt nutzt standardmäßig eine lokale SQLite-Datenbank (`backend/database.sqlite`), die beim ersten Start automatisch eingerichtet wird.
-
-1. Installiere die Node-Abhängigkeiten (Root & Frontend):
-   ```bash
-   npm install
-   cd frontend && npm install && cd ..
-   ```
-
-2. Starte das Projekt:
-   ```bash
-   npm run dev
-   ```
-
-Dies startet das React-Frontend unter `http://localhost:5173` und das PHP-Backend unter `http://localhost:8000`.
-
-**Standard Admin-Account:**
-* Benutzername: `admin`
-* Passwort: `admin`
-
-**Standard Testverein:**
-* Benutzername: `testverein`
-* Passwort: `testverein`
-
-Die lokale SQLite-Installation erzeugt zusätzlich drei dynamische Demo-Freizeiten für diesen Testverein: eine vergangene, eine laufende und eine bevorstehende. Im Docker-Entwicklungsstack sind sie ebenfalls aktiviert. In produktiven MySQL- oder PostgreSQL-Installationen bleiben sie standardmäßig aus und können bei Bedarf über `SEED_DEMO_DATA=1` eingeschaltet werden.
-
-## Ausführung via Docker (Gesamter Stack)
-
-Um die gesamte Anwendung vollständig isoliert (Frontend, PHP-Backend und MySQL-Datenbank) laufen zu lassen:
-
-```bash
-docker-compose up -d --build
-```
-
-Nachdem die Container gestartet sind, erreichst du:
-* **Frontend:** `http://localhost:8080`
-* **Backend API:** `http://localhost:8000`
-
-Die Datenbank-Tabellen werden beim ersten Aufruf automatisch erstellt.
-
-## Produktion Deployment
-
-Für den produktiven Einsatz wird ein dedizierter Webserver (z. B. Apache, Nginx) und eine SQL-Datenbank (MySQL oder PostgreSQL) empfohlen.
-
-### 1. Frontend kompilieren
-```bash
+```sh
+npm ci
 cd frontend
+npm ci
+cd ../backend
+composer install
+cd ..
+npm run dev
+```
+
+Frontend: http://localhost:5173 · Backend: http://localhost:8000
+
+SQLite bleibt der lokale Standard (`backend/database.sqlite`). Die Entwicklungszugänge bleiben bestehen:
+
+| Konto | Benutzername | Passwort |
+| --- | --- | --- |
+| Master-Admin | admin | admin |
+| Verein | testverein | testverein |
+
+Demo-Freizeiten werden bei der Einrichtung angelegt. Lokale SQLite-Dateien, Testnutzer und vorhandene Entwicklungslogs müssen nicht aus dem Repository oder der Git-Historie entfernt werden. Produktionsimages nehmen diese Dateien nicht mit.
+
+Die Anmeldung verwendet jetzt HttpOnly-Cookies. Nach dem Update einmal neu anmelden. Für HTML-Bereinigung ist `composer install` auch bei der lokalen Entwicklung erforderlich.
+
+Ohne eigene Konfiguration gelten `APP_ENV=development`, SQLite und `APP_BASE_URL=http://localhost:5173`. Zum Ändern der Adresse muss `APP_BASE_URL` zur tatsächlich verwendeten Frontend-Adresse passen (auch Port und localhost/127.0.0.1 beachten). Echte Konfigurationswerte gehören in Umgebungsvariablen oder die ignorierte Datei `backend/config.local.php`; Umgebungsvariablen haben Vorrang. `config.example.php` ist eine **Produktionsvorlage**, keine notwendige lokale Konfiguration.
+
+## Docker-Entwicklungsstack
+
+```sh
+docker compose up -d --build
+```
+
+Frontend: http://localhost:8080 · Backend: http://localhost:8000
+
+Der Stack verwendet MySQL, Entwicklungszugänge und Demo-Daten. Die Ports sind ausschließlich an den lokalen Rechner gebunden. Er ist keine fertige Produktionskonfiguration.
+
+PHP-Pakete liegen im separaten `backend_vendor`-Volume, damit der Quellcode-Mount die installierten Pakete nicht verdeckt. Nach Änderungen an `composer.lock`:
+
+```sh
+docker compose exec backend composer install --no-dev
+```
+
+## Prüfen
+
+```sh
+cd backend
+composer test
+composer audit
+cd ../frontend
+npm run lint
 npm run build
+npm audit
+npx playwright install chromium
 ```
-Die fertigen statischen Dateien liegen dann im Verzeichnis `frontend/dist`. Kopiere den Inhalt dieses Ordners in den Webroot deiner Domain. Die Datei `frontend/public/.htaccess` wird beim Build mit nach `frontend/dist/.htaccess` kopiert und leitet `/api/...` sowie `/uploads/...` passend an den Backend-Ordner weiter.
 
-### 2. Backend aufsetzen (Apache)
-Kopiere den Inhalt des `backend/` Ordners in einen Ordner `backend/` im Webroot deiner Domain. Stelle sicher, dass `mod_rewrite` aktiviert ist (für die `.htaccess` Dateien) und dass das Verzeichnis `backend/uploads/` durch den Webserver (z. B. `www-data`) beschreibbar ist.
+Die PHP-Tests verwenden ausschließlich temporäre Datenbanken; die HTTP-Tests starten einen eigenen PHP-Testserver. Sie sind unter Linux/Docker geprüft. Die Browser-Tests benötigen ebenfalls ein separates Test-Backend, nicht deine lokale Entwicklungsdatenbank. Einrichtung und SQL-/Server-Tests stehen in [TESTING.md](TESTING.md).
 
-### 3. Datenbank konfigurieren
-Das PHP-Skript erstellt die Tabellen automatisch beim ersten Request, wenn diese fehlen. Für Deployment ohne eingecheckte Zugangsdaten kannst du `backend/config.example.php` nach `backend/config.local.php` kopieren und dort die echten Verbindungsdaten eintragen. `backend/config.local.php` wird von Git ignoriert.
+## Späteres Deployment
 
-Alternativ kannst du die Verbindungsdaten über Umgebungsvariablen setzen (z.B. im Apache vHost oder einer `.env` via Server-Config). Umgebungsvariablen haben Vorrang vor `backend/config.local.php`:
+Frontend und PHP/PDO-Backend bleiben bestehen; ein Framework- oder Architekturwechsel ist nicht nötig.
 
-* `DB_CONNECTION`: `mysql`, `pgsql` oder leer lassen für `sqlite`
-* `DB_HOST`: Hostname (z. B. `localhost` oder eine IP)
-* `DB_NAME`: Datenbankname (z. B. `westsachsen_camps`)
-* `DB_USER`: Datenbank-Benutzer
-* `DB_PASSWORD`: Datenbank-Passwort
+1. `frontend` mit `npm ci` und `npm run build` bauen.
+2. `frontend/dist/` in den Webroot kopieren, den Backend-Code in dessen Unterordner `backend/`. **Keine** lokale SQLite-Datenbank, Entwicklungslogs, Tests oder lokale Konfiguration mit deployen. `composer install --no-dev --prefer-dist --no-interaction` im Backend ausführen.
+3. Apache mit `mod_rewrite`, `mod_headers` und wirksamen `.htaccess`-Regeln einrichten (`AllowOverride All` für diese Verzeichnisse). Die mitgelieferten Regeln schützen Backend-Dateien und leiten API/Bilder weiter. Bei Nginx sind entsprechende Serverregeln nötig; `frontend/nginx.conf` zeigt die getrennte Docker-Variante.
+4. HTTPS auf der gesamten Website erzwingen. Frontend, `/api/` und `/uploads/` müssen unter **derselben Origin** erreichbar sein.
+5. `backend/config.example.php` als Vorlage verwenden: `APP_ENV=production`, `APP_BASE_URL=https://…`, zufälliger `APP_KEY` mit mindestens 32 Zeichen, gültiger `MAIL_FROM`, MySQL-/PostgreSQL-Zugang und ein beschreibbares `APP_LOG_DIR` **außerhalb** des Webroots. SQLite wird im Produktionsmodus abgelehnt. Einen Schlüssel erzeugt `php -r "echo bin2hex(random_bytes(32));"`.
+6. Für eine leere Produktionsdatenbank einmal `BOOTSTRAP_ADMIN_EMAIL` und `BOOTSTRAP_ADMIN_PASSWORD` setzen (mindestens 16, höchstens 72 Bytes), Anwendung initialisieren, Anmeldung prüfen und beide Werte wieder entfernen. In Produktion werden auch bei `SEED_DEMO_DATA=1` **keine Demo-Konten** angelegt. Dafür eine frische SQL-Datenbank nutzen; vorhandene lokale Testkonten werden bewusst nicht automatisch gelöscht.
+7. Nur das Upload-Verzeichnis beschreibbar machen; PHP-Code und Konfiguration nicht durch den Webprozess beschreiben lassen. Upload-Grenzen aus `backend/php.ini` auch im Webserver/PHP-FPM übernehmen. Das Dockerfile übernimmt sie bereits.
+8. PHP-`mail()` mit einem echten Mailtransport konfigurieren und Einladung, Passwort-Reset sowie Kontaktformular bis zum tatsächlichen Empfang testen. Das mitgelieferte Dockerimage enthält noch keinen Mailtransport. Es gibt keinen Fallback mehr, der Einladungs-/Resetlinks in Logdateien schreibt.
+9. Bei einem Reverse Proxy `TRUSTED_PROXIES` ausschließlich auf dessen konkrete IP-Adressen setzen und weitergeleitete Client-IP-Header am äußeren Proxy kontrollieren. Ohne diese Konfiguration werden Forwarded-Header ignoriert; dadurch teilen sich Nutzer hinter einem Proxy dessen Rate-Limit.
+10. Vor Freigabe Backups/Wiederherstellung, Rechte, HTTPS, Versand, Logrotation und regelmäßige Löschung abgelaufener Sessions/Passworttokens/Rate-Limit-Einträge sowie eine Aufbewahrungsfrist für Kontakt-Metadaten festlegen.
 
-Beispiel Apache SetEnv in vhost-Config:
-```apache
-<VirtualHost *:80>
-    ServerName api.deinedomain.de
-    DocumentRoot /var/www/westsachsen/backend
+Die Einrichtung ergänzt Tabellen automatisch über `app_migrations`. Beim ersten Start nach diesem Sicherheitsupdate werden bisherige Sessions widerrufen und gespeicherte Beschreibungen bereinigt. Vor Aktualisierung einer wichtigen Datenbank deshalb ein Backup anlegen und den ersten Start ohne parallelen öffentlichen Verkehr durchführen.
 
-    SetEnv DB_CONNECTION mysql
-    SetEnv DB_HOST 127.0.0.1
-    SetEnv DB_NAME meine_db
-    SetEnv DB_USER mein_user
-    SetEnv DB_PASSWORD mein_passwort
-
-    <Directory /var/www/westsachsen/backend>
-        AllowOverride All
-        Require all granted
-    </Directory>
-</VirtualHost>
-```
+Prioritäten, umgesetzte Maßnahmen und verbleibende Deployment-Aufgaben: [SECURITY_AND_UX.md](SECURITY_AND_UX.md).

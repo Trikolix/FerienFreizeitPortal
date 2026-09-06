@@ -1,3 +1,5 @@
+import { useAction } from '../utils/useAction';
+import { apiFetch } from '../utils/api';
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { KeyRound, PencilLine, Save, ShieldCheck } from 'lucide-react';
@@ -10,12 +12,13 @@ const getRoleLabel = (role?: string) => {
 };
 
 export const AccountSettingsPage: React.FC = () => {
-  const { user, token, updateUser, logout } = useAuthStore();
+  const { user, updateUser, logout } = useAuthStore();
   const navigate = useNavigate();
   const [displayName, setDisplayName] = useState(user?.display_name || user?.club_name || '');
   const [contactInfo, setContactInfo] = useState(user?.contact_info || '');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const { busy, runAction } = useAction(setError);
   const [isPasswordFormOpen, setIsPasswordFormOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -23,22 +26,22 @@ export const AccountSettingsPage: React.FC = () => {
   const [passwordError, setPasswordError] = useState('');
 
   useEffect(() => {
-    if (!user || !token) {
+    if (!user) {
       navigate('/login');
     }
-  }, [user, token, navigate]);
+  }, [user, navigate]);
 
-  const handleProfileSubmit = async (event: React.FormEvent) => {
+  const handleProfileSubmit = (event: React.FormEvent) => runAction(async () => {
     event.preventDefault();
     setError('');
     setMessage('');
 
     try {
-      const response = await fetch('/api/me', {
+      const response = await apiFetch('/api/me', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+
         },
         body: JSON.stringify({ display_name: displayName, contact_info: contactInfo }),
       });
@@ -49,17 +52,17 @@ export const AccountSettingsPage: React.FC = () => {
       }
       updateUser(data);
       setMessage('Öffentliche Vereinsangaben gespeichert.');
-    } catch {
-      setError('Netzwerkfehler');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Anfrage fehlgeschlagen.');
     }
-  };
+  });
 
-  const handlePasswordSubmit = async (event: React.FormEvent) => {
+  const handlePasswordSubmit = (event: React.FormEvent) => runAction(async () => {
     event.preventDefault();
     setPasswordError('');
 
-    if (newPassword.length < 8) {
-      setPasswordError('Das neue Passwort muss mindestens 8 Zeichen lang sein.');
+    if (newPassword.length < 8 || new TextEncoder().encode(newPassword).length > 72) {
+      setPasswordError(newPassword.length < 8 ? 'Bitte mindestens 8 Zeichen verwenden.' : 'Dieses Passwort ist zu lang. Bitte etwas kürzen; Sonderzeichen benötigen mehr Platz.');
       return;
     }
     if (newPassword !== passwordConfirmation) {
@@ -68,11 +71,11 @@ export const AccountSettingsPage: React.FC = () => {
     }
 
     try {
-      const response = await fetch('/api/me/password', {
+      const response = await apiFetch('/api/me/password', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+
         },
         body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
       });
@@ -82,12 +85,12 @@ export const AccountSettingsPage: React.FC = () => {
         return;
       }
 
-      logout();
+      await logout();
       navigate('/login?passwort-geaendert=1');
-    } catch {
-      setPasswordError('Netzwerkfehler');
+    } catch (error) {
+      setPasswordError(error instanceof Error ? error.message : 'Anfrage fehlgeschlagen.');
     }
-  };
+  });
 
   return (
     <div className="settings-page">
@@ -131,7 +134,7 @@ export const AccountSettingsPage: React.FC = () => {
               <span>Kontakt für Rückfragen</span>
               <textarea value={contactInfo} onChange={(event) => setContactInfo(event.target.value)} placeholder="z. B. E-Mail-Adresse, Telefonnummer und Ansprechperson" />
             </label>
-            <button className="primary-action" type="submit"><Save size={18} /> Öffentliche Angaben speichern</button>
+            <button className="primary-action" type="submit" disabled={busy}><Save size={18} /> Öffentliche Angaben speichern</button>
           </form>
           <aside className="public-profile-preview" aria-label="Vorschau der öffentlichen Angaben">
             <span>So sehen Familien dein Angebot</span>
@@ -167,7 +170,7 @@ export const AccountSettingsPage: React.FC = () => {
               <input type="password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} autoComplete="new-password" required />
             </label>
             <div className="form-actions">
-              <button className="primary-action" type="submit">Passwort speichern</button>
+              <button className="primary-action" type="submit" disabled={busy}>Passwort speichern</button>
               <button className="secondary-action" type="button" onClick={() => { setIsPasswordFormOpen(false); setCurrentPassword(''); setNewPassword(''); setPasswordConfirmation(''); setPasswordError(''); }}>Abbrechen</button>
             </div>
           </form>

@@ -1,18 +1,14 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { apiFetch } from '../utils/api';
+import React, { useEffect, useMemo, useState, useRef, lazy, Suspense } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CalendarDays, ChevronDown, Euro, Filter, List, Map, MapPin, Search, Tag, UsersRound, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
-import L from 'leaflet';
-import { SearchMap } from '../components/SearchMap';
+
+const SearchMap = lazy(() => import('../components/SearchMap').then((m) => ({ default: m.SearchMap })));
 import { ImageGallery } from '../components/ImageGallery';
 import { stripHtmlAndTruncate } from '../utils/textUtils';
 
-delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-});
+
 
 interface Holiday {
   id: number;
@@ -92,14 +88,18 @@ const getHolidayForCamp = (camp: Camp, holidays: Holiday[]) => holidays.find((ho
 });
 
 export const SearchPage: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [camps, setCamps] = useState<Camp[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
-  const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
-  const [ageFilter, setAgeFilter] = useState('');
-  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
-  const [startDateFilter, setStartDateFilter] = useState('');
-  const [endDateFilter, setEndDateFilter] = useState('');
-  const [holidayFilter, setHolidayFilter] = useState('');
+  const [viewMode, setViewMode] = useState<'list' | 'map'>(searchParams.get('view') === 'map' ? 'map' : 'list');
+  const [ageFilter, setAgeFilter] = useState(searchParams.get('age') || '');
+  const [selectedTypes, setSelectedTypes] = useState<string[]>(searchParams.get('types')?.split(',').filter(Boolean) || []);
+  const [startDateFilter, setStartDateFilter] = useState(searchParams.get('start_date') || '');
+  const [endDateFilter, setEndDateFilter] = useState(searchParams.get('end_date') || '');
+  const [holidayFilter, setHolidayFilter] = useState(searchParams.get('holiday') || '');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
   const [bounds, setBounds] = useState<{ minLat: number; maxLat: number; minLng: number; maxLng: number } | null>(null);
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
   const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false);
@@ -111,6 +111,17 @@ export const SearchPage: React.FC = () => {
   const mobileFilterButtonRef = useRef<HTMLButtonElement>(null);
   const mobileFilterSheetRef = useRef<HTMLDivElement>(null);
   const mobileFilterCloseRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (ageFilter) params.set('age', ageFilter);
+    if (selectedTypes.length) params.set('types', selectedTypes.join(','));
+    if (startDateFilter) params.set('start_date', startDateFilter);
+    if (endDateFilter) params.set('end_date', endDateFilter);
+    if (holidayFilter) params.set('holiday', holidayFilter);
+    if (viewMode === 'map') params.set('view', 'map');
+    if (params.toString() !== searchParams.toString()) setSearchParams(params, { replace: true });
+  }, [ageFilter, selectedTypes, startDateFilter, endDateFilter, holidayFilter, viewMode, searchParams, setSearchParams]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -166,7 +177,7 @@ export const SearchPage: React.FC = () => {
   useEffect(() => {
     const fetchHolidays = async () => {
       try {
-        const response = await fetch('/api/holidays');
+        const response = await apiFetch('/api/holidays');
         const data = await response.json();
         setHolidays(data);
       } catch (err) {
@@ -177,7 +188,10 @@ export const SearchPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
     const fetchCamps = async () => {
+      setLoading(true);
+      setError('');
       const params = new URLSearchParams();
       if (ageFilter) params.set('age', ageFilter);
       if (selectedTypes.length > 0) params.set('types', selectedTypes.join(','));
@@ -191,17 +205,19 @@ export const SearchPage: React.FC = () => {
       }
 
       try {
-        const res = await fetch(`/api/camps?${params.toString()}`);
+        const res = await apiFetch(`/api/camps?${params.toString()}`, { signal: controller.signal });
         const data = await res.json();
-        setCamps(Array.isArray(data) ? data : []);
+        if (!controller.signal.aborted) setCamps(Array.isArray(data) ? data : []);
       } catch (error) {
-        console.error('Error fetching camps:', error);
-        setCamps([]);
+        if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Die Suche konnte nicht geladen werden.');
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
 
-    fetchCamps();
-  }, [ageFilter, selectedTypes, startDateFilter, endDateFilter, bounds, viewMode]);
+    void fetchCamps();
+    return () => controller.abort();
+  }, [ageFilter, selectedTypes, startDateFilter, endDateFilter, bounds, viewMode, retry]);
 
   const typeOptions = useMemo(() => {
     const fallback = ['Sport', 'Lager', 'Kreativ', 'Bildung', 'Natur'];
@@ -211,7 +227,7 @@ export const SearchPage: React.FC = () => {
 
   const hasActiveFilters = ageFilter !== '' || selectedTypes.length > 0 || startDateFilter !== '' || endDateFilter !== '';
   const additionalFilterCount = selectedTypes.length + (startDateFilter || endDateFilter ? (holidayFilter ? 0 : 1) : 0);
-  const resultCountLabel = `${camps.length} ${camps.length === 1 ? 'Angebot' : 'Angebote'}`;
+  const resultCountLabel = loading ? 'Suche läuft …' : error ? 'Suche nicht verfügbar' : `${camps.length} ${camps.length === 1 ? 'Angebot' : 'Angebote'}`;
 
   const applyHolidayFilter = (value: string) => {
     setHolidayFilter(value);
@@ -309,20 +325,19 @@ export const SearchPage: React.FC = () => {
           <div className="field">
             <span>Kategorie</span>
             <div className="multi-select-container" ref={typeDropdownRef}>
-              <div 
+              <button type="button" aria-label="Kategorien wählen"
                 className="multi-select-trigger" 
                 onClick={() => setIsTypeDropdownOpen(!isTypeDropdownOpen)}
-                aria-haspopup="listbox"
                 aria-expanded={isTypeDropdownOpen}
               >
-                <div className="multi-select-value">
+                <span className="multi-select-value">
                   <Tag size={18} />
                   <span className={selectedTypes.length ? '' : 'is-placeholder'}>
                     {selectedTypes.length === 0 ? 'Alle Kategorien' : selectedTypes.join(', ')}
                   </span>
-                </div>
+                </span>
                 <ChevronDown size={16} />
-              </div>
+              </button>
               
               <AnimatePresence>
                 {isTypeDropdownOpen && (
@@ -488,9 +503,11 @@ export const SearchPage: React.FC = () => {
         </div>
       </div>
 
+      {loading && <p role="status">Freizeiten werden gesucht …</p>}
+      {error && <p className="alert" role="alert">{error} <button type="button" onClick={() => setRetry((value) => value + 1)}>Erneut versuchen</button></p>}
       {viewMode === 'list' ? (
         <section aria-label="Ergebnisliste">
-          {camps.length === 0 ? (
+          {camps.length === 0 && !loading && !error ? (
             <div className="empty-state">
               <Search size={36} />
               <h2>Keine passenden Freizeiten gefunden</h2>
@@ -528,7 +545,7 @@ export const SearchPage: React.FC = () => {
                         )}
                       </div>
                     </div>
-                    <Link className="camp-body" to={`/freizeiten/${camp.id}`}>
+                    <Link className="camp-body" to={`/freizeiten/${camp.id}`} state={{ search: searchParams.toString() }}>
                       <div>
                         <h2>{camp.title}</h2>
                         <p className="provider">{camp.club_name}</p>
@@ -580,7 +597,7 @@ export const SearchPage: React.FC = () => {
           )}
         </section>
       ) : (
-        <SearchMap camps={camps} setBounds={setBounds} />
+        <Suspense fallback={<p role="status">Karte wird geladen …</p>}><SearchMap camps={camps} setBounds={setBounds} /></Suspense>
       )}
 
       {isMobileFiltersOpen && (

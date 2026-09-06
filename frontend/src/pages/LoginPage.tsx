@@ -1,12 +1,14 @@
+import { apiFetch } from '../utils/api';
 import React, { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { KeyRound, LogIn, UserRound } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 
-export const LoginPage: React.FC = () => {
+export const LoginPage: React.FC<{ onAuthenticated?: () => void; expectedUserId?: number }> = ({ onAuthenticated, expectedUserId }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const login = useAuthStore((state) => state.login);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -14,10 +16,12 @@ export const LoginPage: React.FC = () => {
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (busy) return;
+    setBusy(true);
     setError('');
 
     try {
-      const res = await fetch('/api/login', {
+      const res = await apiFetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: email, password }),
@@ -28,12 +32,13 @@ export const LoginPage: React.FC = () => {
       if (!res.ok) {
         setError(data.error || 'Login fehlgeschlagen');
       } else {
-        login(data.user, data.token);
-        navigate(data.user.role === 'user' ? '/dashboard' : '/admin');
+        if (expectedUserId && data.user.id !== expectedUserId) throw new Error('Bitte mit demselben Konto anmelden, um diese Eingaben weiterzubearbeiten.');
+        login(data.user, data.csrf_token);
+        if (onAuthenticated) onAuthenticated();
+        else navigate(data.user.role === 'user' ? '/dashboard' : '/admin');
       }
-    } catch {
-      setError('Netzwerkfehler');
-    }
+    } catch (error) { setError(error instanceof Error ? error.message : 'Anmeldung fehlgeschlagen.'); }
+    finally { setBusy(false); }
   };
 
   return (
@@ -86,9 +91,9 @@ export const LoginPage: React.FC = () => {
             </div>
           </label>
 
-          <button className="primary-action" type="submit">
+          <button className="primary-action" type="submit" disabled={busy}>
             <LogIn size={18} />
-            Anmelden
+            {busy ? 'Anmeldung läuft …' : 'Anmelden'}
           </button>
           <Link className="secondary-action auth-link" to="/passwort-vergessen">
             Passwort vergessen

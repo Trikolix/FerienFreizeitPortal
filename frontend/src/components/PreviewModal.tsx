@@ -1,6 +1,11 @@
 import React from 'react';
 import { CalendarClock, CalendarDays, Euro, MapPin, Tag, UsersRound, X } from 'lucide-react';
 import { ImageGallery } from './ImageGallery';
+import { Modal } from './Modal';
+import { safeHtml } from '../utils/safeHtml';
+import { useImagePreviews } from '../utils/useImagePreviews';
+
+const noFiles: File[] = [];
 
 interface PreviewModalProps {
   camp: Partial<{
@@ -22,6 +27,7 @@ interface PreviewModalProps {
   onClose: () => void;
   clubName?: string;
   contactInfo?: string;
+  selectedFiles?: File[];
 }
 
 const formatDateTime = (value?: string) => {
@@ -46,11 +52,12 @@ const formatPrice = (value?: number | string) => {
   }).format(amount);
 };
 
-export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubName, contactInfo }) => {
-  const hasLocation = camp.location_lat !== undefined && camp.location_lng !== undefined;
+export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubName, contactInfo, selectedFiles = noFiles }) => {
+  const previews = useImagePreviews(selectedFiles);
+  const hasLocation = camp.location_lat != null && camp.location_lng != null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <Modal title="Freizeitvorschau" onClose={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={onClose} aria-label="Schließen">
           <X size={22} />
@@ -58,7 +65,7 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubN
 
         <article className="camp-detail-page preview-detail">
           <section className="detail-hero preview-hero">
-            <ImageGallery images={camp.images} title={camp.title} />
+            <ImageGallery images={[...(camp.images || []), ...previews]} title={camp.title} />
           </section>
 
           <section className="detail-layout preview-layout">
@@ -66,7 +73,7 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubN
               <span className="eyebrow">{camp.categories?.join(', ') || camp.type || 'Kategorie'}</span>
               <h1>{camp.title || 'Titel der Freizeit'}</h1>
               <p className="provider">{clubName}</p>
-              <div className="detail-description" dangerouslySetInnerHTML={{ __html: camp.description || 'Keine Beschreibung hinterlegt.' }} />
+              <div className="detail-description" dangerouslySetInnerHTML={{ __html: safeHtml(camp.description || 'Keine Beschreibung hinterlegt.') }} />
             </div>
 
             <aside className="detail-sidebar" aria-label="Freizeitdetails">
@@ -88,7 +95,7 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubN
                 <UsersRound size={20} />
                 <div>
                   <span>Alter</span>
-                  <strong>{camp.min_age || 0}-{camp.max_age || 0} Jahre</strong>
+                  <strong>{camp.min_age == null || camp.max_age == null ? 'Noch nicht angegeben' : `${camp.min_age}–${camp.max_age} Jahre`}</strong>
                 </div>
               </div>
               <div className="detail-fact">
@@ -130,6 +137,6 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubN
           </section>
         </article>
       </div>
-    </div>
+    </Modal>
   );
 };

@@ -1,8 +1,11 @@
+import { ImageSelection } from '../components/ImageSelection';
+import { useAction } from '../utils/useAction';
+import { apiFetch } from '../utils/api';
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Pencil, ShieldCheck, Trash2, UserPlus, CheckCircle2, Eye, XCircle, ImagePlus, Tag, ChevronDown } from 'lucide-react';
-import ReactQuill from 'react-quill-new';
-import 'react-quill-new/dist/quill.snow.css';
+import { RichTextEditor } from '../components/RichTextEditor';
+
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '../store/authStore';
 import { MapPicker } from '../components/MapPicker';
@@ -45,6 +48,8 @@ interface ClubUser {
   contact_info: string;
   is_active: number;
   camp_count?: number;
+  delivery_status?: 'sent' | 'failed' | null;
+  sent_at?: string;
 }
 
 const parseJson = async (response: Response) => {
@@ -55,10 +60,8 @@ const parseJson = async (response: Response) => {
   }
 };
 
-const fetchJsonArray = async <T,>(url: string, token: string): Promise<T[]> => {
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+const fetchJsonArray = async <T,>(url: string): Promise<T[]> => {
+  const response = await apiFetch(url);
   const data = await parseJson(response);
 
   if (!response.ok) {
@@ -73,7 +76,7 @@ const fetchJsonArray = async <T,>(url: string, token: string): Promise<T[]> => {
 };
 
 export const AdminDashboard: React.FC = () => {
-  const { user, token } = useAuthStore();
+  const { user, csrfToken } = useAuthStore();
   const navigate = useNavigate();
   const isMasterAdmin = user?.role === 'master_admin';
   const isAdmin = user?.role === 'admin' || user?.role === 'master_admin';
@@ -88,12 +91,21 @@ export const AdminDashboard: React.FC = () => {
 
   const [formData, setFormData] = useState({ email: '', display_name: '', role: 'user', contact_info: '' });
   const [error, setError] = useState('');
-  
+  const [notice, setNotice] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [userSearch, setUserSearch] = useState('');
+  const [campSearch, setCampSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [sort, setSort] = useState('date');
+  const [initialCamp, setInitialCamp] = useState('');
+  const { busy, runAction } = useAction(setError);
+
+
   const [editingCampId, setEditingCampId] = useState<number | null>(null);
   const [campEditData, setCampEditData] = useState<Partial<Camp>>({});
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [formError, setFormError] = useState('');
-  const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
 
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
   const typeDropdownRef = useRef<HTMLDivElement>(null);
@@ -103,6 +115,11 @@ export const AdminDashboard: React.FC = () => {
   const [userEditData, setUserEditData] = useState({ display_name: '', role: 'user', contact_info: '' });
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null);
   const [deleteUserConfirmation, setDeleteUserConfirmation] = useState('');
+
+  const dirty = editingCampId !== null && (selectedFiles.length > 0 || JSON.stringify(campEditData) !== initialCamp);
+  const visibleClubs = clubs.filter((club) => `${club.display_name} ${club.email}`.toLocaleLowerCase('de').includes(userSearch.toLocaleLowerCase('de')));
+  const visibleCamps = camps.filter((camp) => (!statusFilter || camp.status === statusFilter) && `${camp.title} ${camp.club_name} ${camp.location_text}`.toLocaleLowerCase('de').includes(campSearch.toLocaleLowerCase('de')))
+    .sort((a, b) => sort === 'title' ? a.title.localeCompare(b.title, 'de') : (a.starts_at || '9999').localeCompare(b.starts_at || '9999'));
 
   const normalizeDateTimeLocal = (value?: string) => value ? value.replace(' ', 'T').slice(0, 16) : '';
   const parseFormDate = (value?: string) => {
@@ -128,10 +145,10 @@ export const AdminDashboard: React.FC = () => {
   }, []);
 
   const fetchCamps = async () => {
-    if (!token) return;
+    if (!csrfToken) return;
 
     try {
-      setCamps(await fetchJsonArray<Camp>('/api/camps?all=1', token));
+      setCamps(await fetchJsonArray<Camp>('/api/camps?all=1'));
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'Freizeiten konnten nicht geladen werden');
@@ -139,10 +156,10 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const fetchClubs = async () => {
-    if (!token) return;
+    if (!csrfToken) return;
 
     try {
-      setClubs(await fetchJsonArray<ClubUser>('/api/admin/users', token));
+      setClubs(await fetchJsonArray<ClubUser>('/api/admin/users'));
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'Vereine konnten nicht geladen werden');
@@ -155,7 +172,7 @@ export const AdminDashboard: React.FC = () => {
       return;
     }
 
-    if (!token) {
+    if (!csrfToken) {
       navigate('/login');
       return;
     }
@@ -164,9 +181,9 @@ export const AdminDashboard: React.FC = () => {
     const loadDashboard = async () => {
       try {
         const [clubsData, campsData, holidaysData] = await Promise.all([
-          fetchJsonArray<ClubUser>('/api/admin/users', token),
-          fetchJsonArray<Camp>('/api/camps?all=1', token),
-          fetchJsonArray<Holiday>('/api/holidays', token),
+          fetchJsonArray<ClubUser>('/api/admin/users'),
+          fetchJsonArray<Camp>('/api/camps?all=1'),
+          fetchJsonArray<Holiday>('/api/holidays'),
         ]);
         if (!cancelled) {
           setError('');
@@ -185,22 +202,24 @@ export const AdminDashboard: React.FC = () => {
       }
     };
 
-    void loadDashboard();
+    void loadDashboard().finally(() => { if (!cancelled) setLoading(false); });
 
     return () => {
       cancelled = true;
     };
-  }, [user, token, navigate, isAdmin]);
+  }, [user, csrfToken, navigate, isAdmin]);
 
   const handleEditCamp = (camp: Camp) => {
+    if (dirty && !window.confirm('Ungespeicherte Änderungen verwerfen?')) return;
+    setInitialCamp(JSON.stringify(camp));
     setEditingCampId(camp.id);
     setCampEditData(camp);
     setDeleteCampId(null);
     setFormError('');
-    setSelectedFiles(null);
+    setSelectedFiles([]);
   };
 
-  const handleSaveCamp = async (event: React.FormEvent) => {
+  const handleSaveCamp = (event: React.FormEvent) => runAction(async () => {
     event.preventDefault();
     setFormError('');
 
@@ -218,11 +237,10 @@ export const AdminDashboard: React.FC = () => {
     }
 
     try {
-      const response = await fetch(`/api/camps/${editingCampId}`, {
+      const response = await apiFetch(`/api/camps/${editingCampId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(campEditData),
       });
@@ -232,31 +250,32 @@ export const AdminDashboard: React.FC = () => {
         throw new Error(data.error || 'Fehler beim Speichern');
       }
 
+      setNotice('Freizeitdaten gespeichert. Ausgewählte Bilder werden anschließend hochgeladen.');
       if (selectedFiles?.length) {
         const imageData = new FormData();
         Array.from(selectedFiles).forEach((file) => imageData.append('images[]', file));
-        await fetch(`/api/camps/${editingCampId}/images`, {
+        await apiFetch(`/api/camps/${editingCampId}/images`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
+
           body: imageData,
         });
       }
 
+      setNotice('Freizeit gespeichert.');
       setEditingCampId(null);
       setCampEditData({});
       fetchCamps();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Fehler beim Speichern');
     }
-  };
+  });
 
-  const handleDeleteImage = async (campId: number, imageUrl: string) => {
+  const handleDeleteImage = (campId: number, imageUrl: string) => runAction(async () => {
     try {
-      await fetch(`/api/camps/${campId}/images`, {
+      await apiFetch(`/api/camps/${campId}/images`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ image_url: imageUrl }),
       });
@@ -266,18 +285,18 @@ export const AdminDashboard: React.FC = () => {
       }));
       fetchCamps();
     } catch (error) {
-      console.error(error);
+      setError(error instanceof Error ? error.message : 'Änderung fehlgeschlagen.');
     }
-  };
+  });
 
-  const handleDeleteCamp = async (id: number) => {
-    await fetch(`/api/camps/${id}`, {
+  const handleDeleteCamp = (id: number) => runAction(async () => {
+    await apiFetch(`/api/camps/${id}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
     });
     setDeleteCampId(null);
+    setNotice('Freizeit gelöscht.');
     fetchCamps();
-  };
+  });
 
   const startEditUser = (club: ClubUser) => {
     setEditingUserId(club.id);
@@ -289,15 +308,14 @@ export const AdminDashboard: React.FC = () => {
     });
   };
 
-  const handleSaveUser = async (event: React.FormEvent, club: ClubUser) => {
+  const handleSaveUser = (event: React.FormEvent, club: ClubUser) => runAction(async () => {
     event.preventDefault();
     setError('');
 
-    const res = await fetch(`/api/admin/users/${club.id}`, {
+    const res = await apiFetch(`/api/admin/users/${club.id}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(userEditData),
     });
@@ -308,16 +326,16 @@ export const AdminDashboard: React.FC = () => {
     }
 
     setEditingUserId(null);
+    setNotice('Vereinsangaben gespeichert.');
     fetchClubs();
-  };
+  });
 
-  const handleDeleteUser = async (club: ClubUser) => {
+  const handleDeleteUser = (club: ClubUser) => runAction(async () => {
     setError('');
-    const res = await fetch(`/api/admin/users/${club.id}`, {
+    const res = await apiFetch(`/api/admin/users/${club.id}`, {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ confirm: deleteUserConfirmation }),
     });
@@ -328,19 +346,20 @@ export const AdminDashboard: React.FC = () => {
     }
     setDeleteUserId(null);
     setDeleteUserConfirmation('');
+    setNotice('Verein und zugehörige Freizeiten gelöscht.');
     fetchClubs();
-  };
+    fetchCamps();
+  });
 
-  const handleSubmit = async (event: React.FormEvent) => {
+  const handleSubmit = (event: React.FormEvent) => runAction(async () => {
     event.preventDefault();
     setError('');
 
     try {
-      const res = await fetch('/api/admin/users', {
+      const res = await apiFetch('/api/admin/users', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(formData),
       });
@@ -349,13 +368,14 @@ export const AdminDashboard: React.FC = () => {
       if (!res.ok) {
         setError(data.error || 'Fehler beim Erstellen');
       } else {
+        setNotice(data.message);
         setFormData({ email: '', display_name: '', role: 'user', contact_info: '' });
         fetchClubs();
       }
-    } catch {
-      setError('Netzwerkfehler');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Einladung konnte nicht erstellt werden.');
     }
-  };
+  });
 
   const getStatusLabel = (status: string) => {
     switch (status) {
@@ -367,21 +387,20 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  const updateStatus = async (camp: Camp, newStatus: string) => {
+  const updateStatus = (camp: Camp, newStatus: string) => runAction(async () => {
     try {
-      await fetch(`/api/camps/${camp.id}`, {
+      await apiFetch(`/api/camps/${camp.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ ...camp, status: newStatus }),
       });
       fetchCamps();
     } catch (error) {
-      console.error(error);
+      setError(error instanceof Error ? error.message : 'Änderung fehlgeschlagen.');
     }
-  };
+  });
 
   const toggleCategory = (cat: string) => {
     const current = campEditData.categories || [];
@@ -389,8 +408,26 @@ export const AdminDashboard: React.FC = () => {
     setCampEditData({ ...campEditData, categories: updated });
   };
 
+  useEffect(() => {
+    if (!dirty) return;
+    const unload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    const leave = (event: Event) => { if (!window.confirm('Ungespeicherte Änderungen verwerfen?')) event.preventDefault(); };
+    const click = (event: MouseEvent) => {
+      const link = (event.target as HTMLElement)?.closest('a[href]');
+      if (link && link.getAttribute('target') !== '_blank' && !window.confirm('Ungespeicherte Änderungen verwerfen?')) { event.preventDefault(); event.stopPropagation(); }
+    };
+    window.addEventListener('beforeunload', unload);
+    window.addEventListener('request-leave-editor', leave);
+    document.addEventListener('click', click, true);
+    return () => { window.removeEventListener('beforeunload', unload); window.removeEventListener('request-leave-editor', leave); document.removeEventListener('click', click, true); };
+  }, [dirty]);
+
   return (
     <div className="dashboard-page">
+      {notice && <p role="status" className="success-alert feedback-banner">{notice}</p>}
+      {loading && <p role="status">Verwaltung wird geladen …</p>}
+      {busy && <p role="status">Änderung wird gespeichert …</p>}
+      <fieldset className="action-scope" disabled={busy} inert={busy}>
       <section className="page-heading">
         <span className="eyebrow">Administration</span>
         <h1>Portal moderieren</h1>
@@ -455,14 +492,13 @@ export const AdminDashboard: React.FC = () => {
         </div>
         <form className="admin-form compact" onSubmit={async (e) => {
           e.preventDefault();
-          if (!token || isCreatingHoliday) return;
+          if (!csrfToken || isCreatingHoliday) return;
           setIsCreatingHoliday(true);
           try {
-            const response = await fetch('/api/admin/holidays', {
+            const response = await apiFetch('/api/admin/holidays', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`
               },
               body: JSON.stringify({
                 name: newHolidayName,
@@ -475,8 +511,9 @@ export const AdminDashboard: React.FC = () => {
             setNewHolidayName('');
             setNewHolidayStart('');
             setNewHolidayEnd('');
-            const updatedHolidays = await fetchJsonArray<Holiday>('/api/holidays', token);
+            const updatedHolidays = await fetchJsonArray<Holiday>('/api/holidays');
             setHolidays(updatedHolidays);
+            setNotice('Ferien gespeichert.');
           } catch (err) {
             console.error(err);
             setError(err instanceof Error ? err.message : 'Fehler beim Erstellen der Ferien');
@@ -516,11 +553,10 @@ export const AdminDashboard: React.FC = () => {
                 </div>
                 <div className="item-actions">
                   <button className="danger-action" type="button" onClick={async () => {
-                    if (!token || !confirm('Wirklich löschen?')) return;
+                    if (!csrfToken || !confirm('Wirklich löschen?')) return;
                     try {
-                      const response = await fetch(`/api/admin/holidays/${holiday.id}`, {
+                      const response = await apiFetch(`/api/admin/holidays/${holiday.id}`, {
                         method: 'DELETE',
-                        headers: { Authorization: `Bearer ${token}` }
                       });
                       if (!response.ok) throw new Error('Fehler beim Löschen');
                       setHolidays(holidays.filter(h => h.id !== holiday.id));
@@ -543,11 +579,12 @@ export const AdminDashboard: React.FC = () => {
           <h2>Registrierte Vereine</h2>
           <span>{clubs.length} Konten</span>
         </div>
-        {clubs.length === 0 ? (
+        <label className="field">Vereine suchen<input value={userSearch} onChange={(e) => setUserSearch(e.target.value)} placeholder="Name oder E-Mail" /></label>
+        {visibleClubs.length === 0 ? (
           <p className="empty-line">Keine Vereine registriert.</p>
         ) : (
           <ul className="club-grid">
-            {clubs.map((club) => (
+            {visibleClubs.map((club) => (
               <li key={club.id} className="club-card">
                 <span className="club-icon"><Building2 size={21} /></span>
                 {editingUserId === club.id ? (
@@ -592,6 +629,13 @@ export const AdminDashboard: React.FC = () => {
                       {club.role === 'master_admin' ? 'Master-Admin' : club.role === 'admin' ? 'Admin' : 'Nutzer'} · {club.is_active ? 'aktiv' : 'eingeladen'}
                     </span>
                     <small>{club.contact_info || 'Keine Kontaktinfo hinterlegt'}</small>
+                    {!club.is_active && <div>
+                      <p>{club.delivery_status === 'failed' ? 'Einladung konnte nicht versendet werden.' : club.delivery_status === 'sent' ? 'Einladung versendet; Aktivierung steht aus.' : 'Einladung steht aus.'}</p>
+                      <button type="button" className="secondary-action" onClick={() => void runAction(async () => {
+                        try { const response = await apiFetch(`/api/admin/users/${club.id}/resend-invite`, { method: 'POST' }); const data = await response.json(); setNotice(data.message); }
+                        finally { await fetchClubs(); }
+                      })}>Einladung erneut senden</button>
+                    </div>}
                     <small>{club.camp_count ?? 0} Freizeiten im Konto</small>
                     <div className="club-card-actions">
                       {club.id !== user?.id && club.role !== 'master_admin' && (
@@ -657,18 +701,18 @@ export const AdminDashboard: React.FC = () => {
             <h2>Freizeit bearbeiten</h2>
             <span>Änderungen als Admin speichern</span>
           </div>
-          {formError && <p className="alert">{formError}</p>}
-          <form className="dashboard-form" onSubmit={handleSaveCamp}>
+          {formError && <p className="alert" role="alert">{formError}</p>}
+          <form className="dashboard-form" noValidate onSubmit={handleSaveCamp}>
             <label className="field">
               <span>Titel</span>
               <input type="text" value={campEditData.title || ''} onChange={(e) => setCampEditData({ ...campEditData, title: e.target.value })} required />
             </label>
-            
+
             <div className="field">
               <span>Kategorien</span>
               <div className="multi-select-container" ref={typeDropdownRef}>
-                <div 
-                  className="multi-select-trigger" 
+                <button type="button" aria-expanded={isTypeDropdownOpen} aria-label="Kategorien wählen"
+                  className="multi-select-trigger"
                   onClick={() => setIsTypeDropdownOpen(!isTypeDropdownOpen)}
                 >
                   <div className="multi-select-value">
@@ -678,11 +722,11 @@ export const AdminDashboard: React.FC = () => {
                     </span>
                   </div>
                   <ChevronDown size={16} />
-                </div>
-                
+                </button>
+
                 <AnimatePresence>
                   {isTypeDropdownOpen && (
-                    <motion.div 
+                    <motion.div
                       className="multi-select-dropdown"
                       initial={{ opacity: 0, y: -10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -691,9 +735,9 @@ export const AdminDashboard: React.FC = () => {
                     >
                       {typeOptions.map(type => (
                         <label key={type} className="multi-select-option">
-                          <input 
-                            type="checkbox" 
-                            checked={campEditData.categories?.includes(type)} 
+                          <input
+                            type="checkbox"
+                            checked={campEditData.categories?.includes(type)}
                             onChange={() => toggleCategory(type)}
                           />
                           <span>{type}</span>
@@ -715,7 +759,7 @@ export const AdminDashboard: React.FC = () => {
             </label>
             <div className="field field-wide">
               <span>Beschreibung</span>
-              <ReactQuill theme="snow" value={campEditData.description || ''} onChange={(val: string) => setCampEditData({ ...campEditData, description: val })} />
+              <RichTextEditor value={campEditData.description || ''} onChange={(val: string) => setCampEditData({ ...campEditData, description: val })} />
             </div>
             <label className="field field-wide">
               <span>Ort</span>
@@ -756,20 +800,17 @@ export const AdminDashboard: React.FC = () => {
                   {campEditData.images.map(img => (
                     <li key={img}>
                       <img src={img} alt="" />
-                      <button className="danger-action" type="button" onClick={() => handleDeleteImage(editingCampId!, img)}><Trash2 size={17} /></button>
+                      <button className="danger-action" type="button" aria-label="Bild löschen" onClick={() => { if (window.confirm('Dieses Bild sofort löschen?')) void handleDeleteImage(editingCampId!, img); }}><Trash2 size={17} /></button>
                     </li>
                   ))}
                 </ul>
               </div>
             ) : null}
-            <label className="field field-wide file-field">
-              <span>Bilder hinzufügen</span>
-              <input type="file" multiple accept="image/*" onChange={(e) => setSelectedFiles(e.target.files)} />
-            </label>
+            <ImageSelection files={selectedFiles} onChange={setSelectedFiles} existingCount={campEditData.images?.length || 0} />
             <div className="form-actions">
               <button className="primary-action" type="submit">Speichern</button>
-              <button className="secondary-action" type="button" onClick={() => setEditingCampId(null)}>Abbrechen</button>
-              <button className="secondary-action" type="button" onClick={() => setIsPreviewOpen(true)}><Eye size={18} /></button>
+              <button className="secondary-action" type="button" onClick={() => { if (!dirty || window.confirm('Ungespeicherte Änderungen verwerfen?')) setEditingCampId(null); }}>Abbrechen</button>
+              <button className="secondary-action" type="button" aria-label="Freizeitvorschau" onClick={() => setIsPreviewOpen(true)}><Eye size={18} /></button>
             </div>
           </form>
         </section>
@@ -778,6 +819,7 @@ export const AdminDashboard: React.FC = () => {
       {isPreviewOpen && (
         <PreviewModal
           camp={campEditData}
+          selectedFiles={selectedFiles}
           onClose={() => setIsPreviewOpen(false)}
           clubName={campEditData.club_name}
         />
@@ -788,11 +830,16 @@ export const AdminDashboard: React.FC = () => {
           <h2>Alle Freizeiten</h2>
           <span>Moderation</span>
         </div>
-        {camps.length === 0 ? (
+        <div className="management-filters">
+          <label>Freizeiten suchen<input value={campSearch} onChange={(e) => setCampSearch(e.target.value)} placeholder="Titel, Verein oder Ort" /></label>
+          <label>Status<select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="">Alle Status</option><option value="draft">Entwurf</option><option value="published">Veröffentlicht</option><option value="fully_booked">Ausgebucht</option><option value="archived">Archiv</option></select></label>
+          <label>Sortieren<select value={sort} onChange={(e) => setSort(e.target.value)}><option value="date">Beginn</option><option value="title">Titel</option></select></label>
+        </div>
+        {visibleCamps.length === 0 ? (
           <p className="empty-line">Keine Freizeiten vorhanden.</p>
         ) : (
           <ul className="management-list">
-            {camps.map((camp) => (
+            {visibleCamps.map((camp) => (
               <li key={camp.id} className="management-item">
                 <div className="management-main">
                    {camp.images?.length ? <img src={camp.images[0]} alt="" /> : <span className="thumb-placeholder"><ImagePlus size={22} /></span>}
@@ -811,6 +858,7 @@ export const AdminDashboard: React.FC = () => {
                   </button>
                   <select
                     className="status-select"
+                    aria-label={`Status für ${camp.title}`}
                     value={camp.status}
                     onChange={(e) => updateStatus(camp, e.target.value)}
                   >
@@ -836,6 +884,7 @@ export const AdminDashboard: React.FC = () => {
           </ul>
         )}
       </section>
+      </fieldset>
     </div>
   );
 };

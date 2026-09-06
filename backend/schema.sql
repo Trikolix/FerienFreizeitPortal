@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS camps (
     ends_at DATETIME,
     price_eur REAL,
     registration_deadline DATETIME,
-    status TEXT DEFAULT 'draft',
+    status VARCHAR(20) DEFAULT 'draft',
     FOREIGN KEY(club_id) REFERENCES users(id) ON DELETE CASCADE
 );
 

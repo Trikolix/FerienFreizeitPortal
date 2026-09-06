@@ -1,3 +1,4 @@
+import { apiFetch } from '../utils/api';
 import React, { useState } from 'react';
 import { Mail, MessageSquare, Send, UserRound } from 'lucide-react';
 
@@ -15,12 +16,13 @@ export const ContactPage: React.FC = () => {
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (isSubmitting) return;
     setError('');
     setSuccess('');
     setIsSubmitting(true);
 
     try {
-      const response = await fetch('/api/contact', {
+      const response = await apiFetch('/api/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -43,8 +45,8 @@ export const ContactPage: React.FC = () => {
       setEmail('');
       setMessage('');
       setWebsite('');
-    } catch {
-      setError('Netzwerkfehler. Bitte versuche es später erneut.');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Anfrage fehlgeschlagen.');
     } finally {
       setIsSubmitting(false);
     }

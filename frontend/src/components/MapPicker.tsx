@@ -1,15 +1,10 @@
 import React, { useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
-import L from 'leaflet';
+import '../utils/leafletIcons';
 import 'leaflet/dist/leaflet.css';
 
 // Fix for default marker icons in Leaflet
-delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-});
+
 
 interface MapPickerProps {
   lat?: number;
@@ -27,22 +22,22 @@ const LocationMarker = ({ lat, lng, onChange }: MapPickerProps) => {
   });
 
   useEffect(() => {
-    if (lat && lng) {
+    if (lat != null && lng != null) {
       map.setView([lat, lng], map.getZoom());
     }
   }, [lat, lng, map]);
 
-  return lat && lng ? (
+  return lat != null && lng != null ? (
     <Marker position={[lat, lng]} />
   ) : null;
 };
 
 export const MapPicker: React.FC<MapPickerProps> = ({ lat, lng, onChange }) => {
-  const center: [number, number] = lat && lng ? [lat, lng] : [50.719, 12.492]; // Default Zwickau/Westsachsen area
+  const center: [number, number] = lat != null && lng != null ? [lat, lng] : [50.719, 12.492]; // Default Zwickau/Westsachsen area
 
   return (
     <div className="map-picker">
-      <MapContainer center={center} zoom={lat && lng ? 13 : 9} className="leaflet-map">
+      <MapContainer center={center} zoom={lat != null && lng != null ? 13 : 9} className="leaflet-map">
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

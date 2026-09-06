@@ -1,16 +1,11 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { MapContainer, Marker, Popup, TileLayer, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import L from 'leaflet';
+import '../utils/leafletIcons';
 import type { Camp } from '../pages/SearchPage';
 
-delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-});
+
 
 interface MapBoundsEventsProps {
   onBoundsChange: (bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number }) => void;
@@ -44,6 +39,7 @@ const formatDate = (dateStr?: string) => {
 };
 
 export const SearchMap: React.FC<SearchMapProps> = ({ camps, setBounds }) => {
+  const location = useLocation();
   return (
     <section aria-label="Kartenansicht" className="map-panel">
       <MapContainer center={[50.7189, 12.4944]} zoom={9} className="leaflet-map" aria-label="Interaktive Karte der Ferienfreizeiten">
@@ -52,7 +48,7 @@ export const SearchMap: React.FC<SearchMapProps> = ({ camps, setBounds }) => {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <MapBoundsEvents onBoundsChange={setBounds} />
-        {camps.filter((camp) => camp.location_lat && camp.location_lng).map((camp) => (
+        {camps.filter((camp) => camp.location_lat != null && camp.location_lng != null).map((camp) => (
           <Marker key={camp.id} position={[camp.location_lat, camp.location_lng]}>
             <Popup>
               <strong className="map-popup-title">{camp.title}</strong>
@@ -68,7 +64,7 @@ export const SearchMap: React.FC<SearchMapProps> = ({ camps, setBounds }) => {
                 </span>
               )}
               <span className="map-popup-line">{camp.min_age}-{camp.max_age} Jahre</span>
-              <Link to={`/freizeiten/${camp.id}`} className="map-popup-link">
+              <Link to={`/freizeiten/${camp.id}`} state={{ search: location.search.replace(/^\?/, '') }} className="map-popup-link">
                 Details ansehen
               </Link>
             </Popup>

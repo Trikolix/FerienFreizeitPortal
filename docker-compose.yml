@@ -1,12 +1,10 @@
-version: '3.8'
-
 services:
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       - backend
 
@@ -15,8 +13,10 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "8000:80"
+      - "127.0.0.1:8000:80"
     environment:
+      - APP_ENV=development
+      - APP_BASE_URL=http://localhost:8080
       - DB_CONNECTION=mysql
       - DB_HOST=db
       - DB_NAME=westsachsen_camps
@@ -25,8 +25,10 @@ services:
       - SEED_DEMO_DATA=1
     volumes:
       - ./backend:/var/www/html
+      - backend_vendor:/var/www/html/vendor
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   db:
     image: mysql:8.0
@@ -38,6 +40,12 @@ services:
       - MYSQL_ROOT_PASSWORD=rootpassword
     volumes:
       - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
 volumes:
   db_data:
+  backend_vendor:

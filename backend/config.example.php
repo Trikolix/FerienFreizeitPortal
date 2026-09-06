@@ -1,6 +1,16 @@
 <?php
 
 return [
+    'APP_ENV' => 'production',
+    'APP_BASE_URL' => 'https://portal.example.org',
+    'APP_KEY' => '', // Generate with: php -r "echo bin2hex(random_bytes(32));"
+    'APP_LOG_DIR' => '/var/log/ferienfreizeitportal',
+    'MAIL_FROM' => 'noreply@example.org',
+    // Set only for the first production start, then remove these two values.
+    'BOOTSTRAP_ADMIN_EMAIL' => '',
+    'BOOTSTRAP_ADMIN_PASSWORD' => '',
+    // Exact proxy IPs only. Leave empty for a directly reachable Apache server.
+    'TRUSTED_PROXIES' => '',
     'DB_CONNECTION' => 'mysql',
     'DB_HOST' => '127.0.0.1',
     'DB_NAME' => 'westsachsen_camps',

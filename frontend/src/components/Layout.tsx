@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Outlet, Link, NavLink, useLocation } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { LogOut, Menu, Shield, UserRoundCog, X } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import headerCircles from '../assets/header_circles.svg';
@@ -10,6 +10,8 @@ export const Layout: React.FC = () => {
   const { user, logout } = useAuthStore();
   const location = useLocation();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
+  const [loggingOut, setLoggingOut] = useState(false);
   const isAdmin = user?.role === 'admin' || user?.role === 'master_admin';
   const menuRef = useRef<HTMLDivElement>(null);
   const menuToggleRef = useRef<HTMLButtonElement>(null);
@@ -128,15 +130,20 @@ export const Layout: React.FC = () => {
                 <div className="menu-divider" aria-hidden="true" />
                 <button
                   className="menu-logout"
-                  onClick={() => {
-                    logout();
-                    setIsMenuOpen(false);
-                    requestAnimationFrame(() => menuToggleRef.current?.focus());
+                  disabled={loggingOut}
+                  onClick={async () => {
+                    if (loggingOut) return;
+                    if (!window.dispatchEvent(new Event('request-leave-editor', { cancelable: true }))) return;
+                    setLoggingOut(true);
+                    try { await logout(); setIsMenuOpen(false); }
+                    catch (error) { setLogoutError(error instanceof Error ? error.message : 'Abmelden fehlgeschlagen.'); }
+                    finally { setLoggingOut(false); }
                   }}
                 >
                   <LogOut size={17} />
                   Abmelden
                 </button>
+                {logoutError && <p role="alert">{logoutError}</p>}
               </nav>
             </>
           ) : null}
@@ -144,17 +151,14 @@ export const Layout: React.FC = () => {
       </header>
 
       <main className="page-shell" id="main-content">
-        <AnimatePresence mode="wait">
           <motion.div
             key={location.pathname}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.22 }}
           >
             <Outlet />
           </motion.div>
-        </AnimatePresence>
       </main>
 
       <footer className="site-footer">

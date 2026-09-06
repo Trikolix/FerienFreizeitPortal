@@ -1,0 +1,5 @@
+vendor
+config.local.php
+*.log
+*.sqlite
+uploads
