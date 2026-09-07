@@ -1,12 +1,14 @@
+import { Modal } from '../components/Modal';
 import { apiFetch } from '../utils/api';
 import React, { useEffect, useMemo, useState, useRef, lazy, Suspense } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { CalendarDays, ChevronDown, Euro, Filter, List, Map, MapPin, Search, Tag, UsersRound, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 
 const SearchMap = lazy(() => import('../components/SearchMap').then((m) => ({ default: m.SearchMap })));
 import { ImageGallery } from '../components/ImageGallery';
 import { stripHtmlAndTruncate } from '../utils/textUtils';
+import { availabilityLabel, availabilityTone, type AvailabilityState } from '../utils/placeRequests';
 
 
 
@@ -36,6 +38,10 @@ export interface Camp {
   status: 'draft' | 'published' | 'fully_booked' | 'archived';
   lifecycle_state?: 'upcoming' | 'ongoing' | 'past';
   images?: string[];
+  image_metadata?: import('../utils/imageMetadata').ImageMetadata[];
+  allocation_method?: 'request' | 'lottery';
+  request_opens_at?: string | null;
+  availability_state?: AvailabilityState;
 }
 
 const parseDateTime = (value?: string) => {
@@ -88,6 +94,7 @@ const getHolidayForCamp = (camp: Camp, holidays: Holiday[]) => holidays.find((ho
 });
 
 export const SearchPage: React.FC = () => {
+  const reducedMotion = useReducedMotion();
   const [searchParams, setSearchParams] = useSearchParams();
   const [camps, setCamps] = useState<Camp[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
@@ -109,8 +116,6 @@ export const SearchPage: React.FC = () => {
   const [isDraftTypeDropdownOpen, setIsDraftTypeDropdownOpen] = useState(false);
   const typeDropdownRef = useRef<HTMLDivElement>(null);
   const mobileFilterButtonRef = useRef<HTMLButtonElement>(null);
-  const mobileFilterSheetRef = useRef<HTMLDivElement>(null);
-  const mobileFilterCloseRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -133,46 +138,7 @@ export const SearchPage: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  useEffect(() => {
-    if (!isMobileFiltersOpen) return;
 
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsMobileFiltersOpen(false);
-        requestAnimationFrame(() => mobileFilterButtonRef.current?.focus());
-        return;
-      }
-
-      if (event.key !== 'Tab' || !mobileFilterSheetRef.current) return;
-
-      const focusableElements = Array.from(mobileFilterSheetRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ));
-      const firstElement = focusableElements[0];
-      const lastElement = focusableElements.at(-1);
-
-      if (!firstElement || !lastElement) {
-        event.preventDefault();
-      } else if (event.shiftKey && document.activeElement === firstElement) {
-        event.preventDefault();
-        lastElement.focus();
-      } else if (!event.shiftKey && document.activeElement === lastElement) {
-        event.preventDefault();
-        firstElement.focus();
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    requestAnimationFrame(() => mobileFilterCloseRef.current?.focus());
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isMobileFiltersOpen]);
 
   useEffect(() => {
     const fetchHolidays = async () => {
@@ -300,6 +266,7 @@ export const SearchPage: React.FC = () => {
 
   return (
     <div className="search-page">
+      <div className="search-intro"><span className="eyebrow">Ferien in Westsachsen</span><h1>Eine gute Zeit beginnt hier.</h1><p>Entdecke Freizeiten für Kinder und Jugendliche – und finde das Angebot, das zu euch passt.</p></div>
       <section className="filter-panel" aria-label="Suchfilter">
         <div className="filter-group-main desktop-filter-controls">
           <div className="filter-title">
@@ -339,14 +306,9 @@ export const SearchPage: React.FC = () => {
                 <ChevronDown size={16} />
               </button>
               
-              <AnimatePresence>
                 {isTypeDropdownOpen && (
-                  <motion.div 
+                  <div
                     className="multi-select-dropdown"
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.15 }}
                   >
                     {typeOptions.map(type => (
                       <label key={type} className="multi-select-option">
@@ -358,9 +320,8 @@ export const SearchPage: React.FC = () => {
                         <span>{type}</span>
                       </label>
                     ))}
-                  </motion.div>
+                  </div>
                 )}
-              </AnimatePresence>
             </div>
           </div>
 
@@ -477,7 +438,7 @@ export const SearchPage: React.FC = () => {
       </section>
 
       <div className="result-toolbar">
-        <span className="result-count" aria-live="polite">{resultCountLabel}</span>
+        <span className="result-count" role="status" aria-atomic="true" aria-live="polite">{resultCountLabel}</span>
         <div className="segmented-control" role="group" aria-label="Darstellung wählen">
           <button
             type="button"
@@ -514,26 +475,17 @@ export const SearchPage: React.FC = () => {
               <p>Ändere Alter oder Kategorie, um mehr Angebote zu sehen.</p>
             </div>
           ) : (
-            <motion.ul
-              className="camp-grid"
-              initial="hidden"
-              animate="show"
-              variants={{
-                hidden: { opacity: 0 },
-                show: { opacity: 1, transition: { staggerChildren: 0.07 } },
-              }}
-            >
+            <ul className="camp-grid">
               {camps.map((camp) => {
                 const holiday = getHolidayForCamp(camp, holidays);
                 return (
                   <motion.li
-                    variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0 } }}
                     key={camp.id}
                     className="camp-card"
-                    whileHover={{ y: -4, transition: { duration: 0.18 } }}
+                    whileHover={reducedMotion ? undefined : { y: -2, transition: { duration: 0.18 } }}
                   >
                     <div className="camp-media">
-                      <ImageGallery images={camp.images} title={camp.title} />
+                      <ImageGallery metadata={camp.image_metadata} images={camp.images} title={camp.title} />
                       <div className="camp-badges">
                         {camp.categories?.map(cat => (
                           <span key={cat} className="camp-type">{cat}</span>
@@ -551,8 +503,8 @@ export const SearchPage: React.FC = () => {
                         <p className="provider">{camp.club_name}</p>
                       </div>
                       <div className="camp-meta">
-                        {camp.status === 'fully_booked' && (
-                          <span className="status-pill is-muted badge-pill">Ausgebucht</span>
+                        {availabilityLabel(camp) && (
+                          <span className={`status-pill ${availabilityTone(camp.availability_state)} badge-pill`}>{availabilityLabel(camp)}</span>
                         )}
                         <span>
                           <UsersRound size={16} />
@@ -593,7 +545,7 @@ export const SearchPage: React.FC = () => {
                   </motion.li>
                 );
               })}
-            </motion.ul>
+            </ul>
           )}
         </section>
       ) : (
@@ -601,13 +553,9 @@ export const SearchPage: React.FC = () => {
       )}
 
       {isMobileFiltersOpen && (
-        <div className="mobile-filter-dialog">
-          <button className="mobile-filter-backdrop" type="button" aria-label="Filter schließen" onClick={closeMobileFilters} />
+        <Modal title="Weitere Filter" onClose={closeMobileFilters}>
           <div
-            ref={mobileFilterSheetRef}
             className="mobile-filter-sheet"
-            role="dialog"
-            aria-modal="true"
             aria-labelledby="mobile-filter-title"
           >
             <div className="mobile-filter-sheet-header">
@@ -615,7 +563,7 @@ export const SearchPage: React.FC = () => {
                 <span className="eyebrow">Suche verfeinern</span>
                 <h2 id="mobile-filter-title">Weitere Filter</h2>
               </div>
-              <button ref={mobileFilterCloseRef} className="mobile-filter-close" type="button" onClick={closeMobileFilters} aria-label="Filter schließen">
+              <button className="mobile-filter-close" type="button" onClick={closeMobileFilters} aria-label="Filter schließen">
                 <X size={22} />
               </button>
             </div>
@@ -628,7 +576,6 @@ export const SearchPage: React.FC = () => {
                     type="button"
                     className="multi-select-trigger"
                     onClick={() => setIsDraftTypeDropdownOpen((current) => !current)}
-                    aria-haspopup="listbox"
                     aria-expanded={isDraftTypeDropdownOpen}
                   >
                     <span className="multi-select-value">
@@ -641,7 +588,7 @@ export const SearchPage: React.FC = () => {
                   </button>
 
                   {isDraftTypeDropdownOpen && (
-                    <div className="multi-select-dropdown" role="listbox" aria-label="Kategorien auswählen">
+                    <div className="multi-select-dropdown" role="group" aria-label="Kategorien auswählen">
                       {typeOptions.map((type) => (
                         <label key={type} className="multi-select-option">
                           <input
@@ -695,7 +642,7 @@ export const SearchPage: React.FC = () => {
               <button type="button" className="primary-action" onClick={applyMobileFilters}>Filter übernehmen</button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

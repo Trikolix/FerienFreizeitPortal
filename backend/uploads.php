@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/image_metadata.php';
 
 function uploadDirectory(): string {
     return (string)appConfig('UPLOAD_DIR', __DIR__ . '/uploads');
@@ -7,6 +8,10 @@ function uploadDirectory(): string {
 function validateUploadedImages(PDO $db, $campId = null): array {
     if (!isset($_FILES['images'])) return [];
     $files = $_FILES['images'];
+    $rawMetadata = $_POST['upload_metadata'] ?? '[]';
+    if (!is_string($rawMetadata)) jsonResponse(['error' => 'Ungültige Bildbeschreibungen.'], 422);
+    $metadata = json_decode($rawMetadata, true);
+    if (!is_array($metadata) || !array_is_list($metadata) || count($metadata) > 10) jsonResponse(['error' => 'Ungültige Bildbeschreibungen.'], 422);
     if (!is_array($files['name'] ?? null) || !is_array($files['tmp_name'] ?? null) || !is_array($files['error'] ?? null)) jsonResponse(['error' => 'Ungültige Bildauswahl.'], 422);
     $maxCount = max(1, (int)appConfig('UPLOAD_MAX_FILES', 10));
     $existing = 0;
@@ -26,6 +31,10 @@ function validateUploadedImages(PDO $db, $campId = null): array {
     $total = 0;
     $errors = [];
     foreach ($files['name'] as $i => $name) {
+        try {
+            if (isset($metadata[$i]) && !is_array($metadata[$i])) throw new InvalidArgumentException('Ungültige Bildbeschreibung.');
+            $description = validateImageMetadata($metadata[$i] ?? []);
+        } catch (InvalidArgumentException $e) { jsonResponse(['error' => $e->getMessage()], 422); }
         $error = null;
         $tmp = $files['tmp_name'][$i] ?? '';
         if (($files['error'][$i] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || !is_string($tmp) || !is_uploaded_file($tmp)) {
@@ -38,7 +47,7 @@ function validateUploadedImages(PDO $db, $campId = null): array {
             if ($size > (int)appConfig('UPLOAD_MAX_BYTES', 5 * 1024 * 1024)) $error = 'Höchstens 5 MB pro Bild erlaubt.';
             elseif (!isset($allowed[$mime]) || !$dimensions || ($dimensions['mime'] ?? '') !== $mime) $error = 'Bitte ein gültiges JPEG-, PNG- oder WebP-Bild wählen.';
             elseif ($dimensions[0] > 6000 || $dimensions[1] > 6000 || $dimensions[0] * $dimensions[1] > 20000000) $error = 'Das Bild darf höchstens 6000 Pixel pro Seite und 20 Megapixel haben.';
-            else $validated[] = ['tmp' => $tmp, 'extension' => $allowed[$mime]];
+            else $validated[] = ['tmp' => $tmp, 'extension' => $allowed[$mime], ...$description];
         }
         if ($error) $errors[] = ['index' => $i, 'name' => is_string($name) ? mb_substr(basename($name), 0, 120) : 'Bild', 'error' => $error];
     }
@@ -68,7 +77,7 @@ function persistUploadedImages(PDO $db, $campId, array $validated, array &$creat
         imagedestroy($image);
         if (!$ok) throw new RuntimeException('Image write failed');
         $url = '/uploads/' . $filename;
-        $db->prepare('INSERT INTO camp_images (camp_id, image_url) VALUES (?, ?)')->execute([$campId, $url]);
+        $db->prepare('INSERT INTO camp_images (camp_id, image_url, alt_text, is_decorative) VALUES (?, ?, ?, ?)')->execute([$campId, $url, $file['alt_text'] ?? null, $file['is_decorative'] ?? 0]);
         $saved[] = $url;
     }
     return $saved;

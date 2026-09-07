@@ -22,7 +22,7 @@ docker run --rm ffp-check sh -c 'composer install --no-interaction --prefer-dist
 
 Der Testserver und sämtliche SQLite-Dateien/Bilder/Logs entstehen in zufälligen temporären Verzeichnissen. Linux/Docker ist die geprüfte Umgebung für den HTTP-Testserver (`sendmail_path=/bin/false` simuliert einen Versandfehler).
 
-Abgedeckt: Rechte/Rollen, öffentliche Daten, private Entwürfe, inaktive Nutzer, CSRF, widerrufene Sessions, Resetlinks, Rate-Limits/gefälschte Proxy-Header, XSS, Feldvalidierung, gemischte Upload-Auswahl sowie Bildreferenzen nach dem Kopieren/Löschen.
+Abgedeckt: Rechte/Rollen, öffentliche Daten, private Entwürfe, inaktive Nutzer, CSRF, widerrufene Sessions, Resetlinks, Rate-Limits/gefälschte Proxy-Header, XSS, Feldvalidierung, Platzstatus und Platzanfragen ohne Inhaltsablage, gemischte Upload-Auswahl sowie Bildreferenzen nach dem Kopieren/Löschen.
 
 ## Frontend und Browser mit SQLite
 
@@ -41,7 +41,7 @@ Playwright startet Vite selbst auf Port 5174 und verwendet ausschließlich das B
 
 Nach dem Lauf `docker stop ffp-browser-test` ausführen. Das entfernt nur diesen Testcontainer samt dessen flüchtiger DB/Uploads, nicht die Entwicklungsdaten. Für wiederholte vollständige Testläufe einen frischen Testcontainer starten: Die Tests umgehen die Anmelde-Limits bewusst nicht.
 
-Browserfälle: Anmeldung/Reload/Logout, unvollständiger Entwurf, Veröffentlichung, Fokus und Vorschau/Escape, fehlerhaftes Speichern/Doppelklick, erneute Anmeldung ohne Eingabeverlust, Einladungsfehler/erneuter Versand, Bildvorschau vor Upload, Suchfilter/Fehler/Retry und 375-Pixel-Ansicht. Tests nutzen Chromium; fehlgeschlagene Läufe hinterlassen lokale Traces in `frontend/test-results/`.
+Browserfälle: Anmeldung/Reload/Logout, unvollständiger Entwurf, Veröffentlichung inklusive Platzverwaltung, Fokus und Vorschau/Escape, fehlerhaftes Speichern/Doppelklick, erneute Anmeldung ohne Eingabeverlust, Einladungsfehler/erneuter Versand, Bildvorschau vor Upload, öffentliche Mehrpersonen-Platzanfrage, Suchfilter/Fehler/Retry und 375-Pixel-Ansicht. Tests nutzen Chromium; fehlgeschlagene Läufe hinterlassen lokale Traces in `frontend/test-results/`.
 
 ## SQL und Apache (PowerShell, Repository-Root)
 
@@ -63,7 +63,7 @@ node backend/tests/sql-smoke.mjs http://127.0.0.1:18081
 node backend/tests/sql-smoke.mjs http://127.0.0.1:18082
 ```
 
-Diese Tests prüfen HTTP-Anmeldung, Draft-Privatheit, Validierung, HTML-Bereinigung, Veröffentlichung, Statusänderung durch Admin, Suchfilter, Ferienüberschneidung, Löschen, Logout und gesperrte Backend-Dateien unter Apache. Die Testfreizeiten/-ferien werden am Ende entfernt.
+Diese Tests prüfen HTTP-Anmeldung, Draft-Privatheit, Validierung, HTML-Bereinigung, Veröffentlichung, private Kapazitätsfelder, schnelle Bestandsänderungen, Statusänderung durch Admin, Suchfilter, Ferienüberschneidung, Löschen, Logout und gesperrte Backend-Dateien unter Apache. Die Testfreizeiten/-ferien werden am Ende entfernt.
 
 Anschließend ausschließlich die selbst gestarteten Testcontainer stoppen:
 
@@ -84,8 +84,21 @@ API ausschließlich an `127.0.0.1:18083` binden, `FFP_SQL_SMOKE=1` setzen und `n
 
 ## Verifizierter Stand
 
-- PHP 8.3: 36 Tests, 193 Assertions erfolgreich.
-- MySQL 8.0 und PostgreSQL 16: SQL-/Apache-Smoke-Tests erfolgreich.
+- PHP 8.3: Platzverwaltungsstand mit 45 Tests/281 Assertions; aktueller Redesign-Abschluss siehe unten.
+- SQLite: Migration und erweiterter SQL-/API-Smoke-Test erfolgreich.
+- MySQL 8.0 und PostgreSQL 16: Erweiterte Migrations-, SQL-, API- und Apache-Smoke-Tests erfolgreich.
 - Produktionsmodus: gezielter erster Admin, kein Demo-Seeding, sichere Cookieattribute und Logout erfolgreich.
-- Frontend: TypeScript-/Vite-Build, ESLint und 9 Chromium-Browserabläufe erfolgreich; zusätzlich mit gebautem Frontend hinter Nginx und MySQL.
+- Frontend: TypeScript-/Vite-Build, ESLint und 10 Chromium-Browserabläufe erfolgreich; ein früherer Stand lief zusätzlich mit gebautem Frontend hinter Nginx und MySQL.
 - npm-/Composer-Audit ohne gemeldete Schwachstellen beim Prüflauf. Kein Ersatz für einen umfassenden Sicherheitsnachweis.
+
+## Redesign und Barrierefreiheit (7. September 2026)
+
+- PHP 8.3: **49 Tests, 311 Assertions erfolgreich**, einschließlich Bildmetadaten-Upload, Kopieren und Schutz veröffentlichter Bildbeschreibungen.
+- 15 Playwright-/Chromium-Tests im vollständigen Abschlusslauf erneut erfolgreich: 11 Funktionsabläufe und 4 zusätzliche Barrierefreiheits-/Responsive-Szenarien. Öffentliche Seitentypen wurden bei 320, 390, 768, 1280 und 1536 CSS-Pixeln geprüft; außerdem Dialoge, Kontomenü, Formularfehler einschließlich Admin-Fehlerfokus, Anbieter-/Admin- und Kontoseiten. Keine axe-Verstöße in den geprüften Zuständen.
+- TypeScript, ESLint und Vite-Produktionsbuild erfolgreich. Docker-Build mit Node 24 ebenfalls geprüft.
+- Docker lokal neu gebaut und unter `http://localhost:8080` gestartet; vorhandene Entwicklungsdaten bleiben erhalten. Startseite zusätzlich am gebauten Nginx-Frontend bei 320 und 1280 Pixeln mit normalen Bewegungseinstellungen geprüft: keine axe-Verstöße, kein horizontaler Überlauf, keine JavaScript-Fehler. API und Weboberfläche antworten mit HTTP 200.
+- SQLite sowie MySQL 8/PostgreSQL 16: Bildmetadaten, Uploads, API und Migrations-Smoke-Tests erfolgreich. Die Legacy-Bildmigration wurde auf beiden SQL-Servern zweimal ausgeführt, ohne Datenverlust oder zweite Änderung.
+- Neue Tests: `backend/tests/ImageMetadataTest.php`, ergänzte HTTP-/SQL-Smoke-Tests und `frontend/tests/accessibility.spec.ts` mit `@axe-core/playwright`.
+- Für einen wiederholten vollständigen Browserlauf den Wegwerf-Testcontainer neu starten. Die Login-Rate-Limits bleiben aktiv und werden nicht für Tests abgeschwächt. Keine zusätzliche manuelle Demo-Anmeldung während des vollständigen Laufs.
+- Die Legacy-SQL-Prüfung `backend/tests/image-migration-smoke.php` mit `FFP_SQL_SMOKE=1` **vor dem ersten API-Aufruf** ausschließlich in einer leeren Wegwerf-SQL-Datenbank ausführen. Sie legt absichtlich eine alte Bildtabelle an und prüft deren Migration. Die üblichen SQL-Smoke-Tests danach ausführen.
+- NVDA/Firefox, VoiceOver/Safari, reale mobile Bildschirmtastaturen und die unabhängige BITV-/WCAG-Prüfung sind noch offen. Details und redaktionelle Freigabevoraussetzungen: [Prüfbericht](docs/barrierefreiheit-pruefbericht.md).

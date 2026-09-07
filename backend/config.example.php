@@ -23,4 +23,10 @@ return [
     'CONTACT_RATE_LIMIT_WINDOW_SECONDS' => 900,
     'CONTACT_MIN_SECONDS' => 3,
     'CONTACT_LOG_SALT' => 'change-this-random-contact-log-salt',
+    'PLACE_REQUEST_SUBJECT_PREFIX' => '[Ferienfreizeitportal]',
+    'PLACE_REQUEST_RATE_LIMIT_MAX' => 5,
+    'PLACE_REQUEST_RATE_LIMIT_WINDOW_SECONDS' => 900,
+    'PLACE_REQUEST_MIN_SECONDS' => 3,
+    'PLACE_REQUEST_EVENT_RETENTION_DAYS' => 90,
+    'PLACE_REQUEST_LOG_SALT' => 'change-this-random-place-request-log-salt',
 ];

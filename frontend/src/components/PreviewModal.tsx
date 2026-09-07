@@ -3,7 +3,9 @@ import { CalendarClock, CalendarDays, Euro, MapPin, Tag, UsersRound, X } from 'l
 import { ImageGallery } from './ImageGallery';
 import { Modal } from './Modal';
 import { safeHtml } from '../utils/safeHtml';
+import { fileDescription } from '../utils/imageMetadata';
 import { useImagePreviews } from '../utils/useImagePreviews';
+import { availabilityLabel, availabilityTone, previewAvailabilityState } from '../utils/placeRequests';
 
 const noFiles: File[] = [];
 
@@ -23,6 +25,14 @@ interface PreviewModalProps {
     price_eur: number | string;
     registration_deadline: string;
     images: string[];
+    image_metadata: import('../utils/imageMetadata').ImageMetadata[];
+    status: string;
+    place_requests_enabled: boolean;
+    allocation_method: 'request' | 'lottery';
+    capacity_total: number;
+    places_remaining: number;
+    request_opens_at: string;
+    waitlist_enabled: boolean;
   }>;
   onClose: () => void;
   clubName?: string;
@@ -55,6 +65,8 @@ const formatPrice = (value?: number | string) => {
 export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubName, contactInfo, selectedFiles = noFiles }) => {
   const previews = useImagePreviews(selectedFiles);
   const hasLocation = camp.location_lat != null && camp.location_lng != null;
+  const availabilityState = previewAvailabilityState(camp);
+  const placeStatus = availabilityLabel({ ...camp, availability_state: availabilityState });
 
   return (
     <Modal title="Freizeitvorschau" onClose={onClose}>
@@ -65,7 +77,7 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubN
 
         <article className="camp-detail-page preview-detail">
           <section className="detail-hero preview-hero">
-            <ImageGallery images={[...(camp.images || []), ...previews]} title={camp.title} />
+            <ImageGallery metadata={[...(camp.image_metadata || []), ...previews.map((url, index) => ({ id: -index - 1, image_url: url, ...fileDescription(selectedFiles[index]) }))]} images={[...(camp.images || []), ...previews]} title={camp.title} />
           </section>
 
           <section className="detail-layout preview-layout">
@@ -132,6 +144,8 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubN
                 <span>Anbieter</span>
                 <strong>{clubName}</strong>
                 <p>{contactInfo || 'Keine Kontaktinformation hinterlegt.'}</p>
+                {placeStatus && <span className={`status-pill ${availabilityTone(availabilityState)}`}>{placeStatus}</span>}
+                <p>Eine Anfrage ist unverbindlich. Buchung, Bestätigung und Bezahlung erfolgen direkt beim Anbieter.</p>
               </div>
             </aside>
           </section>

@@ -74,6 +74,36 @@ final class HttpSecurityTest extends TestCase {
         self::assertSame(401, $this->request('/api/me', 'GET', null, $this->club)['status']);
     }
 
+    public function testImageDescriptionsAuthorizationPublicationAndCopy(): void {
+        $create = $this->request('/api/camps', 'POST', $this->camp(), $this->club);
+        $id = $create['body']['id'];
+        self::$database->prepare('INSERT INTO camp_images (camp_id, image_url) VALUES (?, ?)')->execute([$id, '/uploads/metadata-test.png']);
+        $imageId = (int)self::$database->lastInsertId();
+        $path = "/api/camps/$id/images/$imageId";
+        self::assertSame(401, $this->request($path, 'PUT', ['alt_text' => 'Bäume'])['status']);
+        self::assertSame(403, $this->request($path, 'PUT', ['alt_text' => 'Bäume'], ['cookie' => $this->club['cookie']])['status']);
+        self::assertSame(422, $this->request("/api/camps/$id", 'PUT', $this->camp(['status' => 'published']), $this->club)['status']);
+        self::assertSame(422, $this->request($path, 'PUT', ['alt_text' => str_repeat('x', 501)], $this->club)['status']);
+        self::assertSame(200, $this->request($path, 'PUT', ['alt_text' => 'Kinder am Waldrand', 'is_decorative' => false], $this->club)['status']);
+        self::assertSame(200, $this->request("/api/camps/$id", 'PUT', $this->camp(['status' => 'published']), $this->club)['status']);
+        self::assertSame(422, $this->request($path, 'PUT', ['alt_text' => ''], $this->club)['status']);
+        $public = $this->request("/api/camps/$id")['body'];
+        self::assertSame(['/uploads/metadata-test.png'], $public['images']);
+        self::assertSame('Kinder am Waldrand', $public['image_metadata'][0]['alt_text']);
+        self::$database->prepare("UPDATE camps SET starts_at = '2020-01-01 10:00:00', ends_at = '2020-01-05 10:00:00' WHERE id = ?")->execute([$id]);
+        $copyResponse = $this->request("/api/camps/$id/duplicate", 'POST', [], $this->club);
+        self::assertSame(201, $copyResponse['status'], $copyResponse['raw']);
+        $copy = $copyResponse['body']['camp'];
+        self::assertSame($public['image_metadata'][0]['alt_text'], $copy['image_metadata'][0]['alt_text']);
+        self::assertNotSame($imageId, $copy['image_metadata'][0]['id']);
+        self::assertSame(404, $this->request('/api/camps/' . $copy['id'] . '/images/' . $imageId, 'PUT', ['alt_text' => 'Wrong camp'], $this->club)['status']);
+        self::assertSame(200, $this->request($path, 'PUT', ['is_decorative' => true], $this->admin)['status']);
+        self::$database->prepare('UPDATE camps SET club_id = ? WHERE id = ?')->execute([$this->admin['user']['id'], $id]);
+        self::assertSame(403, $this->request($path, 'PUT', ['alt_text' => 'Foreign camp'], $this->club)['status']);
+        $this->request("/api/camps/$id", 'DELETE', null, $this->admin);
+        $this->request('/api/camps/' . $copy['id'], 'DELETE', null, $this->club);
+    }
+
     public function testDraftPrivacyOwnershipAndPublicFields(): void {
         $create = $this->request('/api/camps', 'POST', ['title' => 'Secret draft'], $this->club);
         self::assertSame(201, $create['status'], $create['raw']);
@@ -99,6 +129,49 @@ final class HttpSecurityTest extends TestCase {
         self::assertSame(422, $this->request('/api/camps', 'POST', ['title' => ['bad']], $this->club)['status']);
         self::assertSame(400, $this->request('/api/camps?start_date[]=oops')['status']);
         self::assertSame(400, $this->request('/api/camps', 'POST', null, $this->club, [], '{bad')['status']);
+    }
+
+    public function testPlaceAvailabilityIsPrivateAndPlaceRequestsDoNotPersistContents(): void {
+        $create = $this->request('/api/camps', 'POST', $this->camp([
+            'status' => 'published',
+            'place_requests_enabled' => true,
+            'allocation_method' => 'request',
+            'capacity_total' => 20,
+            'places_remaining' => 3,
+            'waitlist_enabled' => true,
+            'place_request_email' => 'booking@example.test',
+        ]), $this->club);
+        self::assertSame(201, $create['status'], $create['raw']);
+        $id = $create['body']['id'];
+
+        $public = $this->request('/api/camps/' . $id);
+        self::assertSame(200, $public['status']);
+        self::assertSame('few_places', $public['body']['availability_state']);
+        foreach (['capacity_total', 'places_remaining', 'place_request_email', 'place_requests_enabled'] as $privateField) self::assertArrayNotHasKey($privateField, $public['body']);
+
+        self::assertSame(401, $this->request("/api/camps/$id/availability", 'PUT', ['places_remaining' => 0])['status']);
+        self::$database->prepare('INSERT INTO users (email, username, password_hash, role, display_name, club_name, contact_info, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, 1)')->execute([
+            'anderer-verein@example.test', 'anderer-verein', password_hash('anderer-verein', PASSWORD_BCRYPT), 'user', 'Anderer Verein', 'Anderer Verein', 'Kontakt',
+        ]);
+        $otherClub = $this->login('anderer-verein', 'anderer-verein');
+        self::assertSame(403, $this->request("/api/camps/$id/availability", 'PUT', ['places_remaining' => 0], $otherClub)['status']);
+        $updated = $this->request("/api/camps/$id/availability", 'PUT', ['places_remaining' => 0], $this->club);
+        self::assertSame(200, $updated['status'], $updated['raw']);
+        self::assertSame('fully_booked', $updated['body']['camp']['status']);
+        self::assertSame('waitlist', $this->request('/api/camps/' . $id)['body']['availability_state']);
+
+        $campStart = strtotime('+40 days');
+        $payload = [
+            'contact_name' => 'Maria Muster', 'contact_email' => 'maria@example.test', 'contact_phone' => '+49 123 456',
+            'participants' => [['first_name' => 'Lina', 'last_name' => 'Muster', 'birth_date' => date('Y-m-d', strtotime('-10 years', $campStart))]],
+            'message' => 'Bitte melden Sie sich bei uns.', 'privacy_acknowledged' => true, 'website' => '', 'form_started_at' => time() - 10,
+        ];
+        $submission = $this->request("/api/camps/$id/place-requests", 'POST', $payload);
+        self::assertSame(503, $submission['status'], $submission['raw']);
+        $event = self::$database->query("SELECT * FROM place_request_events WHERE camp_id = $id ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        self::assertSame('delivery_failed', $event['action']);
+        self::assertStringNotContainsString('Lina', json_encode($event));
+        self::assertStringNotContainsString($payload['participants'][0]['birth_date'], json_encode($event));
     }
 
     public function testRateLimitCannotBeBypassedWithForwardedHeader(): void {
@@ -142,13 +215,22 @@ final class HttpSecurityTest extends TestCase {
         $mixed = $part('good.png', $png, 'image/png') . $part('bad.jpg', '<?php echo 1;', 'image/jpeg') . "--$boundary--\r\n";
         self::assertSame(422, $this->request("/api/camps/$id/images", 'POST', null, $this->club, ['Content-Type' => "multipart/form-data; boundary=$boundary"], $mixed)['status']);
         self::assertSame(0, (int)self::$database->query("SELECT COUNT(*) FROM camp_images WHERE camp_id = $id")->fetchColumn());
-        $valid = $part('good.png', $png, 'image/png') . "--$boundary--\r\n";
+        $metadataPart = "--$boundary\r\nContent-Disposition: form-data; name=\"upload_metadata\"\r\n\r\n" . json_encode([['alt_text' => 'Schwarzes Testquadrat', 'is_decorative' => false]]) . "\r\n";
+        $valid = $metadataPart . $part('good.png', $png, 'image/png') . "--$boundary--\r\n";
         $upload = $this->request("/api/camps/$id/images", 'POST', null, $this->club, ['Content-Type' => "multipart/form-data; boundary=$boundary"], $valid);
         self::assertSame(200, $upload['status'], $upload['raw']);
+        self::assertSame('Schwarzes Testquadrat', $upload['body']['image_metadata'][0]['alt_text']);
         $url = $upload['body']['images'][0];
-        self::$database->exec("UPDATE camps SET starts_at = '2020-01-01 10:00:00', ends_at = '2020-01-02 10:00:00' WHERE id = $id");
+        self::$database->exec("UPDATE camps SET starts_at = '2020-01-01 10:00:00', ends_at = '2020-01-02 10:00:00', place_requests_enabled = 1, allocation_method = 'request', capacity_total = 12, places_remaining = 3, request_opens_at = '2019-11-01 10:00:00', waitlist_enabled = 1, place_request_email = 'kopie@example.test' WHERE id = $id");
         $copy = $this->request("/api/camps/$id/duplicate", 'POST', [], $this->club);
         self::assertSame(201, $copy['status'], $copy['raw']);
+        self::assertFalse($copy['body']['camp']['place_requests_enabled']);
+        self::assertSame('request', $copy['body']['camp']['allocation_method']);
+        self::assertSame(12, $copy['body']['camp']['capacity_total']);
+        self::assertSame(12, $copy['body']['camp']['places_remaining']);
+        self::assertNull($copy['body']['camp']['request_opens_at']);
+        self::assertTrue($copy['body']['camp']['waitlist_enabled']);
+        self::assertSame('kopie@example.test', $copy['body']['camp']['place_request_email']);
         self::assertSame(200, $this->request("/api/camps/$id/images", 'DELETE', ['image_url' => $url], $this->club)['status']);
         self::assertSame(200, $this->request($url)['status']);
         $copyId = $copy['body']['camp']['id'];

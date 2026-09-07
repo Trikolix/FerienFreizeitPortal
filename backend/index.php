@@ -388,6 +388,17 @@ if ($needsSecurityMigration) {
     $db->exec('INSERT INTO app_migrations (version) VALUES (1)');
 }
 
+$needsPlaceRequestMigration = !$db->query('SELECT 1 FROM app_migrations WHERE version = 2')->fetchColumn();
+if ($needsPlaceRequestMigration) {
+    ensurePlaceRequestSchema($db, $dbConnection);
+    $db->exec('INSERT INTO app_migrations (version) VALUES (2)');
+}
+purgeOldPlaceRequestEvents($db, placeRequestConfig($localConfig)['retention_days']);
+if (!$db->query('SELECT 1 FROM app_migrations WHERE version = 3')->fetchColumn()) {
+    ensureImageMetadataSchema($db, $dbConnection);
+    $db->exec('INSERT INTO app_migrations (version) VALUES (3)');
+}
+
 // Helper: send JSON response
 function jsonResponse($data, $statusCode = 200) {
     http_response_code($statusCode);
@@ -406,7 +417,7 @@ function apiBaseUrl() {
     return $scheme . '://' . $host;
 }
 
-function sendHtmlMail($to, $subject, $html) {
+function sendHtmlMail($to, $subject, $html, $replyTo = null) {
     $from = (string)appConfig('MAIL_FROM', 'noreply@ferienfreizeitportal.local');
     if (!filter_var($from, FILTER_VALIDATE_EMAIL) || !filter_var($to, FILTER_VALIDATE_EMAIL)) return false;
     $headers = [
@@ -415,6 +426,10 @@ function sendHtmlMail($to, $subject, $html) {
         'Content-Transfer-Encoding: 8bit',
         'From: ' . $from,
     ];
+    if ($replyTo !== null) {
+        if (!filter_var($replyTo, FILTER_VALIDATE_EMAIL) || preg_match('/[\r\n]/', (string)$replyTo)) return false;
+        $headers[] = 'Reply-To: ' . $replyTo;
+    }
 
     $sent = false;
     if (function_exists('mail')) {
@@ -740,16 +755,17 @@ function campLifecycleState(array $camp, ?DateTimeImmutable $now = null): string
 
 function campWithLifecycle(array $camp, ?DateTimeImmutable $now = null): array {
     $camp['description'] = sanitizeDescription($camp['description'] ?? '');
-    foreach (['id', 'club_id', 'min_age', 'max_age'] as $key) if (isset($camp[$key])) $camp[$key] = (int)$camp[$key];
+    foreach (['id', 'club_id', 'min_age', 'max_age', 'capacity_total', 'places_remaining'] as $key) if (isset($camp[$key])) $camp[$key] = (int)$camp[$key];
     foreach (['location_lat', 'location_lng', 'price_eur'] as $key) if (isset($camp[$key])) $camp[$key] = (float)$camp[$key];
+    foreach (['place_requests_enabled', 'waitlist_enabled'] as $key) if (isset($camp[$key])) $camp[$key] = (bool)$camp[$key];
     $camp['lifecycle_state'] = campLifecycleState($camp, $now);
+    $camp['availability_state'] = placeRequestState($camp, $now);
     return $camp;
 }
 
 function campWithRelations($db, array $camp, ?DateTimeImmutable $now = null): array {
-    $stmtImg = $db->prepare('SELECT image_url FROM camp_images WHERE camp_id = ?');
-    $stmtImg->execute([$camp['id']]);
-    $camp['images'] = $stmtImg->fetchAll(PDO::FETCH_COLUMN);
+    $camp['image_metadata'] = campImageMetadata($db, $camp['id']);
+    $camp['images'] = array_column($camp['image_metadata'], 'image_url');
 
     $stmtCat = $db->prepare('SELECT category FROM camp_categories WHERE camp_id = ?');
     $stmtCat->execute([$camp['id']]);
@@ -985,14 +1001,18 @@ try {
             if (normalizeRole($user['role']) !== 'user') jsonResponse(['error' => 'Nur Vereine können eigene Freizeiten anlegen.'], 403);
             $data = requireValidCamp($data, $user);
             $validatedImages = validateUploadedImages($db);
+            requireImageDescriptions($validatedImages, $data['status']);
             beginWrite($db);
             $createdPaths = [];
 
-            $stmt = $db->prepare('INSERT INTO camps (club_id, title, min_age, max_age, description, location_text, location_lat, location_lng, type, starts_at, ends_at, price_eur, registration_deadline, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt = $db->prepare('INSERT INTO camps (club_id, title, min_age, max_age, description, location_text, location_lat, location_lng, type, starts_at, ends_at, price_eur, registration_deadline, status, place_requests_enabled, allocation_method, capacity_total, places_remaining, request_opens_at, waitlist_enabled, place_request_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             $stmt->execute([
                 $user['id'], $data['title'] ?? '', $data['min_age'] ?? null, $data['max_age'] ?? null, $data['description'] ?? '',
                 $data['location_text'] ?? '', $data['location_lat'] ?? null, $data['location_lng'] ?? null, $data['type'] ?? '', $data['starts_at'] ?? null,
-                $data['ends_at'] ?? null, $data['price_eur'] ?? null, $data['registration_deadline'] ?? null, $data['status'] ?? 'draft'
+                $data['ends_at'] ?? null, $data['price_eur'] ?? null, $data['registration_deadline'] ?? null, $data['status'] ?? 'draft',
+                $data['place_requests_enabled'] ?? 0, $data['allocation_method'] ?? 'request', $data['capacity_total'] ?? null,
+                $data['places_remaining'] ?? null, $data['request_opens_at'] ?? null, $data['waitlist_enabled'] ?? 0,
+                $data['place_request_email'] ?? null
             ]);
             $newCampId = $db->lastInsertId();
 
@@ -1010,11 +1030,14 @@ try {
             $ownerStmt = $db->prepare('SELECT * FROM users WHERE id = ?');
             $ownerStmt->execute([$existing['club_id']]);
             $data = requireValidCamp($data, $ownerStmt->fetch(PDO::FETCH_ASSOC), $existing);
-            $stmt = $db->prepare('UPDATE camps SET title = ?, min_age = ?, max_age = ?, description = ?, location_text = ?, location_lat = ?, location_lng = ?, type = ?, starts_at = ?, ends_at = ?, price_eur = ?, registration_deadline = ?, status = ? WHERE id = ?');
+            requireImageDescriptions(campImageMetadata($db, $campId), $data['status']);
+            $stmt = $db->prepare('UPDATE camps SET title = ?, min_age = ?, max_age = ?, description = ?, location_text = ?, location_lat = ?, location_lng = ?, type = ?, starts_at = ?, ends_at = ?, price_eur = ?, registration_deadline = ?, status = ?, place_requests_enabled = ?, allocation_method = ?, capacity_total = ?, places_remaining = ?, request_opens_at = ?, waitlist_enabled = ?, place_request_email = ? WHERE id = ?');
             $stmt->execute([
                 $data['title'], $data['min_age'], $data['max_age'], $data['description'],
                 $data['location_text'], $data['location_lat'], $data['location_lng'], $data['type'], $data['starts_at'],
-                $data['ends_at'], $data['price_eur'], $data['registration_deadline'], $data['status'], $campId
+                $data['ends_at'], $data['price_eur'], $data['registration_deadline'], $data['status'], $data['place_requests_enabled'],
+                $data['allocation_method'], $data['capacity_total'], $data['places_remaining'], $data['request_opens_at'],
+                $data['waitlist_enabled'], $data['place_request_email'], $campId
             ]);
             saveCampCategories($db, $campId, $data['categories']);
             $db->commit();
@@ -1051,18 +1074,20 @@ try {
         try {
             $copyTitle = trim((string)$sourceCamp['title']);
             $copyTitle = $copyTitle === '' ? 'Freizeit' : $copyTitle;
-            $stmt = $db->prepare('INSERT INTO camps (club_id, title, min_age, max_age, description, location_text, location_lat, location_lng, type, starts_at, ends_at, price_eur, registration_deadline, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+            $stmt = $db->prepare('INSERT INTO camps (club_id, title, min_age, max_age, description, location_text, location_lat, location_lng, type, starts_at, ends_at, price_eur, registration_deadline, status, place_requests_enabled, allocation_method, capacity_total, places_remaining, request_opens_at, waitlist_enabled, place_request_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
             $stmt->execute([
                 $sourceCamp['club_id'], $copyTitle . ' (Kopie)', $sourceCamp['min_age'], $sourceCamp['max_age'],
                 $sourceCamp['description'], $sourceCamp['location_text'], $sourceCamp['location_lat'], $sourceCamp['location_lng'], $sourceCamp['type'],
-                null, null, null, null, 'draft'
+                null, null, null, null, 'draft', 0, $sourceCamp['allocation_method'] ?? 'request',
+                $sourceCamp['capacity_total'] ?? null, $sourceCamp['capacity_total'] ?? null, null,
+                $sourceCamp['waitlist_enabled'] ?? 0, $sourceCamp['place_request_email'] ?? null
             ]);
             $newCampId = $db->lastInsertId();
 
             $copyCategories = $db->prepare('INSERT INTO camp_categories (camp_id, category) SELECT ?, category FROM camp_categories WHERE camp_id = ?');
             $copyCategories->execute([$newCampId, $sourceCamp['id']]);
 
-            $copyImages = $db->prepare('INSERT INTO camp_images (camp_id, image_url) SELECT ?, image_url FROM camp_images WHERE camp_id = ?');
+            $copyImages = $db->prepare('INSERT INTO camp_images (camp_id, image_url, alt_text, is_decorative) SELECT ?, image_url, alt_text, is_decorative FROM camp_images WHERE camp_id = ?');
             $copyImages->execute([$newCampId, $sourceCamp['id']]);
 
             $db->commit();
@@ -1082,6 +1107,65 @@ try {
             'camp' => campWithRelations($db, $copiedCamp),
         ], 201);
     }
+    elseif (preg_match('/^\/api\/camps\/(\d+)\/availability$/', $requestUri, $matches) && $requestMethod === 'PUT') {
+        $user = authenticateUser($db);
+        if (!$user) jsonResponse(['error' => 'Unauthorized'], 401);
+        $data = readJsonBody();
+        $value = $data['places_remaining'] ?? null;
+        if (!is_scalar($value) || is_bool($value) || !is_numeric($value) || (float)$value != (int)$value) {
+            jsonResponse(['error' => 'Bitte gib eine gültige Anzahl freier Plätze an.', 'fields' => ['places_remaining' => 'Bitte gib eine ganze Zahl ein.']], 422);
+        }
+
+        beginWrite($db);
+        $camp = getCampForUser($db, (int)$matches[1], $user);
+        if (!$camp) jsonResponse(['error' => 'Nicht erlaubt.'], 403);
+        if (placeRequestBool($camp['place_requests_enabled'] ?? false) !== true || $camp['capacity_total'] === null) {
+            jsonResponse(['error' => 'Für diese Freizeit ist die Platzverwaltung nicht aktiviert.'], 422);
+        }
+        $remaining = (int)$value;
+        if ($remaining < 0 || $remaining > (int)$camp['capacity_total']) {
+            jsonResponse(['error' => 'Die freien Plätze müssen zwischen 0 und der Gesamtkapazität liegen.', 'fields' => ['places_remaining' => 'Wert außerhalb der Kapazität.']], 422);
+        }
+        $status = $camp['status'];
+        if (($camp['allocation_method'] ?? 'request') === 'request' && in_array($status, ['published', 'fully_booked'], true)) {
+            $status = $remaining === 0 ? 'fully_booked' : 'published';
+        }
+        $stmt = $db->prepare('UPDATE camps SET places_remaining = ?, status = ? WHERE id = ?');
+        $stmt->execute([$remaining, $status, $camp['id']]);
+        $db->commit();
+
+        $stmt = $db->prepare('SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id WHERE c.id = ?');
+        $stmt->execute([$camp['id']]);
+        jsonResponse(['message' => 'Freie Plätze aktualisiert.', 'camp' => campWithRelations($db, $stmt->fetch(PDO::FETCH_ASSOC))]);
+    }
+    elseif (preg_match('/^\/api\/camps\/(\d+)\/place-requests$/', $requestUri, $matches) && $requestMethod === 'POST') {
+        $stmt = $db->prepare('SELECT c.*, u.email AS owner_email, u.club_name, u.contact_info, u.is_active AS owner_active FROM camps c JOIN users u ON c.club_id = u.id WHERE c.id = ?');
+        $stmt->execute([(int)$matches[1]]);
+        $camp = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$camp || !campIsPublic($camp) || !(int)$camp['owner_active']) {
+            jsonResponse(['error' => 'Freizeit nicht gefunden.'], 404);
+        }
+        $camp = campWithLifecycle($camp);
+        $result = processPlaceRequestSubmission($db, $localConfig, $camp, readJsonBody(), $_SERVER);
+        jsonResponse($result['body'], $result['status']);
+    }
+    elseif (preg_match('/^\/api\/camps\/(\d+)\/images\/(\d+)$/', $requestUri, $matches) && $requestMethod === 'PUT') {
+        $user = authenticateUser($db);
+        if (!$user) jsonResponse(['error' => 'Bitte anmelden.'], 401);
+        beginWrite($db);
+        $imageCamp = getCampForUser($db, $matches[1], $user);
+        if (!$imageCamp) jsonResponse(['error' => 'Nicht erlaubt.'], 403);
+        $image = $db->prepare('SELECT id FROM camp_images WHERE id = ? AND camp_id = ?');
+        $image->execute([$matches[2], $matches[1]]);
+        if (!$image->fetchColumn()) jsonResponse(['error' => 'Bild nicht gefunden.'], 404);
+        try { $metadata = validateImageMetadata(readJsonBody()); }
+        catch (InvalidArgumentException $e) { jsonResponse(['error' => $e->getMessage()], 422); }
+        requireImageDescriptions([$metadata], $imageCamp['status']);
+        $db->prepare('UPDATE camp_images SET alt_text = ?, is_decorative = ? WHERE id = ? AND camp_id = ?')
+            ->execute([$metadata['alt_text'], $metadata['is_decorative'], $matches[2], $matches[1]]);
+        $db->commit();
+        jsonResponse(['message' => 'Bildbeschreibung gespeichert.']);
+    }
     elseif (preg_match('/^\/api\/camps\/(\d+)\/images$/', $requestUri, $matches) && $requestMethod === 'POST') {
         $user = authenticateUser($db);
         if (!$user) {
@@ -1095,10 +1179,11 @@ try {
 
         beginWrite($db);
         $validatedImages = validateUploadedImages($db, $campId);
+        requireImageDescriptions($validatedImages, getCampForUser($db, $campId, $user)['status']);
         $createdPaths = [];
         $savedImages = persistUploadedImages($db, $campId, $validatedImages, $createdPaths);
         $db->commit();
-        jsonResponse(['message' => 'Images uploaded successfully', 'images' => $savedImages]);
+        jsonResponse(['message' => 'Bilder gespeichert.', 'images' => $savedImages, 'image_metadata' => campImageMetadata($db, $campId)]);
     }
     elseif (preg_match('/^\/api\/camps\/(\d+)\/images$/', $requestUri, $matches) && $requestMethod === 'DELETE') {
         $user = authenticateUser($db);
@@ -1391,15 +1476,17 @@ try {
         if (!empty($campIds)) {
             $chunks = array_chunk($campIds, 900);
             $imagesByCamp = [];
+            $metadataByCamp = [];
             $categoriesByCamp = [];
 
             foreach ($chunks as $chunk) {
                 $inQuery = implode(',', array_fill(0, count($chunk), '?'));
                 
-                $stmtImg = $db->prepare("SELECT camp_id, image_url FROM camp_images WHERE camp_id IN ($inQuery)");
+                $stmtImg = $db->prepare("SELECT id, camp_id, image_url, alt_text, is_decorative FROM camp_images WHERE camp_id IN ($inQuery) ORDER BY id");
                 $stmtImg->execute($chunk);
                 foreach ($stmtImg->fetchAll(PDO::FETCH_ASSOC) as $img) {
                     $imagesByCamp[$img['camp_id']][] = $img['image_url'];
+                    $metadataByCamp[$img['camp_id']][] = imageMetadataPayload($img);
                 }
 
                 $stmtCat = $db->prepare("SELECT camp_id, category FROM camp_categories WHERE camp_id IN ($inQuery)");
@@ -1411,6 +1498,7 @@ try {
 
             foreach ($camps as &$camp) {
                 $camp['images'] = $imagesByCamp[$camp['id']] ?? [];
+                $camp['image_metadata'] = $metadataByCamp[$camp['id']] ?? [];
                 $camp['categories'] = $categoriesByCamp[$camp['id']] ?? [];
                 $camp['type'] = !empty($camp['categories']) ? $camp['categories'][0] : $camp['type'];
                 $camp = campWithLifecycle($camp);

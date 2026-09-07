@@ -4,6 +4,8 @@ import React, { useEffect, useState } from 'react';
 import { Link, useParams, useLocation } from 'react-router-dom';
 import { ArrowLeft, CalendarClock, CalendarDays, Euro, MapPin, Tag, UsersRound } from 'lucide-react';
 import { ImageGallery } from '../components/ImageGallery';
+import { PlaceRequestModal } from '../components/PlaceRequestModal';
+import { availabilityLabel, availabilityTone, placeRequestActionLabel, type AvailabilityState } from '../utils/placeRequests';
 
 interface Holiday {
   id: number;
@@ -30,8 +32,12 @@ interface Camp {
   registration_deadline: string;
   status: 'draft' | 'published' | 'fully_booked' | 'archived';
   images?: string[];
+  image_metadata?: import('../utils/imageMetadata').ImageMetadata[];
   contact_info?: string;
   username?: string;
+  allocation_method?: 'request' | 'lottery';
+  request_opens_at?: string | null;
+  availability_state?: AvailabilityState;
 }
 
 const formatDateTime = (value?: string) => {
@@ -73,6 +79,7 @@ export const CampDetailPage: React.FC = () => {
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [isPlaceRequestOpen, setIsPlaceRequestOpen] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -101,10 +108,12 @@ export const CampDetailPage: React.FC = () => {
     return () => controller.abort();
   }, [id]);
 
-  if (loading) return <div className="empty-state"><h2>Laden...</h2></div>;
-  if (error || !camp) return <div className="empty-state"><h2>{error || 'Freizeit nicht gefunden'}</h2><Link to="/">Zurück zur Suche</Link></div>;
+  if (loading) return <div className="empty-state"><p role="status">Freizeit wird geladen …</p></div>;
+  if (error || !camp) return <div className="empty-state"><h1>Freizeit nicht verfügbar</h1><p role="alert">{error || 'Freizeit nicht gefunden'}</p><Link to="/">Zurück zur Suche</Link></div>;
 
   const holiday = getHolidayForCamp(camp, holidays);
+  const placeStatus = availabilityLabel(camp);
+  const placeAction = placeRequestActionLabel(camp.availability_state);
 
   return (
     <article className="camp-detail-page">
@@ -114,7 +123,7 @@ export const CampDetailPage: React.FC = () => {
       </Link>
 
       <section className="detail-hero">
-        <ImageGallery images={camp.images} title={camp.title} />
+        <ImageGallery metadata={camp.image_metadata} images={camp.images} title={camp.title} />
       </section>
 
       <section className="detail-layout">
@@ -188,11 +197,13 @@ export const CampDetailPage: React.FC = () => {
             <span>Anbieter</span>
             <strong>{camp.club_name}</strong>
             <p>{camp.contact_info || 'Keine Kontaktinformation hinterlegt.'}</p>
-            <p>Anmeldung und Buchung erfolgen direkt beim Anbieter.</p>
-            {camp.status === 'fully_booked' && <p role="status">Diese Freizeit ist ausgebucht.</p>}
+            {placeStatus && <span className={`status-pill ${availabilityTone(camp.availability_state)}`} role="status">{placeStatus}</span>}
+            <p>Eine Anfrage ist unverbindlich. Buchung, Bestätigung und Bezahlung erfolgen direkt beim Anbieter.</p>
+            {placeAction && <button className="primary-action detail-request-action" type="button" onClick={() => setIsPlaceRequestOpen(true)}>{placeAction}</button>}
           </div>
         </aside>
       </section>
+      {isPlaceRequestOpen && <PlaceRequestModal camp={camp} onClose={() => setIsPlaceRequestOpen(false)} />}
     </article>
   );
 };

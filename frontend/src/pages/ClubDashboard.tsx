@@ -1,6 +1,9 @@
+import { AccessibleForm } from '../components/AccessibleForm';
+import { ExistingImages } from '../components/ExistingImages';
+import { appendImages, saveImageDescriptions, descriptionsComplete, fileDescription, type ImageMetadata } from '../utils/imageMetadata';
 import { ImageSelection } from '../components/ImageSelection';
 import { Modal } from '../components/Modal';
-import { editorSections, fieldSection, publicationIssues } from '../utils/campForm';
+import { editorSections, fieldSection, publicationIssues, type EditorSection } from '../utils/campForm';
 import { useAction } from '../utils/useAction';
 import { apiFetch, ApiError } from '../utils/api';
 import React, { useEffect, useState, useRef, useMemo } from 'react';
@@ -31,6 +34,15 @@ interface Camp {
   status: 'draft' | 'published' | 'fully_booked' | 'archived';
   lifecycle_state?: 'upcoming' | 'ongoing' | 'past';
   images?: string[];
+  image_metadata?: ImageMetadata[];
+  place_requests_enabled?: boolean;
+  allocation_method?: 'request' | 'lottery';
+  capacity_total?: number;
+  places_remaining?: number;
+  request_opens_at?: string;
+  waitlist_enabled?: boolean;
+  place_request_email?: string;
+  availability_state?: 'available' | 'few_places' | 'waitlist' | 'sold_out' | 'application_open' | 'not_open' | 'closed' | 'contact_only';
 }
 
 const normalizeDateTimeLocal = (value?: string) => value ? value.replace(' ', 'T').slice(0, 16) : '';
@@ -66,7 +78,7 @@ export const ClubDashboard: React.FC = () => {
   const [formError, setFormError] = useState('');
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
-  const [activeEditorSection, setActiveEditorSection] = useState<'basics' | 'schedule' | 'location' | 'images'>('basics');
+  const [activeEditorSection, setActiveEditorSection] = useState<EditorSection>('basics');
   const [campToDelete, setCampToDelete] = useState<Camp | null>(null);
   const [initialFormData, setInitialFormData] = useState('{}');
   const [isDiscardDialogOpen, setIsDiscardDialogOpen] = useState(false);
@@ -80,13 +92,15 @@ export const ClubDashboard: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('');
   const [sort, setSort] = useState('date');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [availabilityDrafts, setAvailabilityDrafts] = useState<Record<number, number>>({});
   const { busy, runAction } = useAction(setDashboardError);
-  const checklist = publicationIssues(formData, user?.contact_info);
+  const checklist = publicationIssues(formData, user?.contact_info, user?.email);
+  if (!descriptionsComplete([...(formData.image_metadata || []), ...selectedFiles.map(fileDescription)])) checklist.images = 'Bitte alle Bilder beschreiben oder als dekorativ kennzeichnen.';
   const focusError = (fields: Record<string, string>) => {
     setFieldErrors(fields);
     const field = Object.keys(fields)[0];
     setActiveEditorSection(fieldSection[field] || 'basics');
-    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[name="${field}"], [data-field="${field}"] .ql-editor, [data-field="${field}"] button`)?.focus());
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[name="${field}"], [data-field="${field}"] .ql-editor, [data-field="${field}"] button, [data-field="${field}"] textarea, [data-field="${field}"]`)?.focus());
   };
 
 
@@ -149,6 +163,7 @@ export const ClubDashboard: React.FC = () => {
     const startsAt = parseFormDate(formData.starts_at);
     const endsAt = parseFormDate(formData.ends_at);
     const registrationDeadline = parseFormDate(formData.registration_deadline);
+    const requestOpensAt = parseFormDate(formData.request_opens_at);
 
     if (
       formData.min_age !== undefined &&
@@ -164,6 +179,10 @@ export const ClubDashboard: React.FC = () => {
 
     if (registrationDeadline && startsAt && registrationDeadline >= startsAt) {
       return 'Der Anmeldeschluss muss vor dem Beginn der Freizeit liegen.';
+    }
+
+    if (requestOpensAt && registrationDeadline && requestOpensAt >= registrationDeadline) {
+      return 'Der Beginn für Anfragen oder Bewerbungen muss vor dem Anmeldeschluss liegen.';
     }
 
     return '';
@@ -203,18 +222,19 @@ export const ClubDashboard: React.FC = () => {
         const formDataObj = new FormData();
         Object.entries(finalData).forEach(([key, value]) => {
           if (key === 'categories' && Array.isArray(value)) {
-            value.forEach(v => formDataObj.append('categories[]', v));
+            value.forEach(v => formDataObj.append('categories[]', String(v)));
           } else if (value !== undefined && value !== null) {
             formDataObj.append(key, String(value));
           }
         });
-        Array.from(selectedFiles).forEach((file) => formDataObj.append('images[]', file));
+        appendImages(formDataObj, selectedFiles);
         reqBody = formDataObj;
       } else {
         headers['Content-Type'] = 'application/json';
         reqBody = JSON.stringify(finalData);
       }
 
+      if (isEditing && formData.id) await saveImageDescriptions(formData.id, formData.image_metadata);
       const response = await apiFetch(url, { method, headers, body: reqBody });
       const data = await response.json();
 
@@ -226,7 +246,7 @@ export const ClubDashboard: React.FC = () => {
       setFormNotice('Freizeitdaten gespeichert.');
       if (isEditing && campId && selectedFiles?.length) {
         const imageData = new FormData();
-        Array.from(selectedFiles).forEach((file) => imageData.append('images[]', file));
+        appendImages(imageData, selectedFiles);
         const imageResponse = await apiFetch(`/api/camps/${campId}/images`, {
           method: 'POST',
 
@@ -282,7 +302,7 @@ export const ClubDashboard: React.FC = () => {
 
   const openCreateEditor = () => {
     setFieldErrors({});
-    setFormData({});
+    setFormData({ place_requests_enabled: false, allocation_method: 'request', waitlist_enabled: false });
     setIsEditing(false);
     setSelectedFiles([]);
     setFormError('');
@@ -326,7 +346,7 @@ export const ClubDashboard: React.FC = () => {
       setFormError('');
       setFormNotice('Kopie angelegt. Ergänze Termin, Preis und Anmeldeschluss, bevor du sie veröffentlichst.');
       setActiveEditorSection('schedule');
-      requestAnimationFrame(() => document.querySelector('.camp-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+      requestAnimationFrame(() => document.querySelector('.camp-editor')?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' }));
     } catch (error) {
       setDashboardError(error instanceof Error ? error.message : 'Kopie konnte nicht angelegt werden');
     }
@@ -379,6 +399,7 @@ export const ClubDashboard: React.FC = () => {
       setFormData((current) => ({
         ...current,
         images: current.images?.filter((image) => image !== imageUrl),
+        image_metadata: current.image_metadata?.filter(image => image.image_url !== imageUrl),
       }));
       fetchCamps();
     } catch (error) {
@@ -398,6 +419,28 @@ export const ClubDashboard: React.FC = () => {
       fetchCamps();
     } catch (error) {
       setDashboardError(error instanceof Error ? error.message : 'Die Aktion ist fehlgeschlagen.');
+    }
+  });
+
+  const updateAvailability = (camp: Camp) => runAction(async () => {
+    const placesRemaining = availabilityDrafts[camp.id] ?? camp.places_remaining;
+    if (placesRemaining == null) return;
+    try {
+      const response = await apiFetch(`/api/camps/${camp.id}/availability`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ places_remaining: placesRemaining }),
+      });
+      const data = await response.json();
+      if (data.camp) setCamps((current) => current.map((entry) => entry.id === camp.id ? data.camp as Camp : entry));
+      setAvailabilityDrafts((current) => {
+        const next = { ...current };
+        delete next[camp.id];
+        return next;
+      });
+      setNotice('Freie Plätze aktualisiert.');
+    } catch (error) {
+      setDashboardError(error instanceof Error ? error.message : 'Freie Plätze konnten nicht aktualisiert werden.');
     }
   });
 
@@ -511,7 +554,7 @@ export const ClubDashboard: React.FC = () => {
         <p>Entwürfe dürfen unvollständig sein. Zum Veröffentlichen fehlen noch {Object.keys(checklist).length} Angaben.</p>
         {formNotice && <p className="success-alert" role="status">{formNotice}</p>}
 
-        <form className="dashboard-form" noValidate onSubmit={handleSubmit} aria-describedby={formError ? 'camp-form-error' : undefined}>
+        <AccessibleForm className="dashboard-form" noValidate onSubmit={handleSubmit} aria-describedby={formError ? 'camp-form-error' : undefined}>
           <section className="editor-step field-wide">
             <button className="editor-step-toggle" type="button" onClick={() => setActiveEditorSection('basics')} aria-expanded={activeEditorSection === 'basics'}>
               <span><strong>1. Grundlagen <span className="step-status">{Object.keys(checklist).some((field) => fieldSection[field] === 'basics') ? 'Angaben offen' : 'Vollständig'}</span></strong><small>Titel, Kategorie, Alter und Beschreibung</small></span>
@@ -575,6 +618,7 @@ export const ClubDashboard: React.FC = () => {
           <div className="field field-wide" data-field="description">
             <span id="description-label">Beschreibung</span>
             <RichTextEditor
+              errorId={fieldErrors.description ? 'error-description' : undefined}
               value={formData.description || ''}
               onChange={(value: string) => setFormData({ ...formData, description: value })}
             />
@@ -608,8 +652,70 @@ export const ClubDashboard: React.FC = () => {
           </section>
 
           <section className="editor-step field-wide">
+            <button className="editor-step-toggle" type="button" onClick={() => setActiveEditorSection('places')} aria-expanded={activeEditorSection === 'places'}>
+              <span><strong>3. Plätze &amp; Anfragen <span className="step-status">{!formData.place_requests_enabled ? 'Optional' : Object.keys(checklist).some((field) => fieldSection[field] === 'places') ? 'Angaben offen' : 'Aktiv'}</span></strong><small>Kapazität, Vergabe und interne Empfängeradresse</small></span>
+              <ChevronDown size={18} />
+            </button>
+            {activeEditorSection === 'places' && <div className="editor-step-content dashboard-form-grid">
+              <label className="toggle-field field-wide">
+                <input
+                  name="place_requests_enabled"
+                  type="checkbox"
+                  checked={Boolean(formData.place_requests_enabled)}
+                  onChange={(event) => setFormData({ ...formData, place_requests_enabled: event.target.checked })}
+                />
+                <span>Unverbindliche Platzanfragen über das Portal ermöglichen</span>
+              </label>
+              <p className="field-wide editor-help">Anfragen reservieren keine Plätze und verändern den Bestand nicht automatisch. Buchung, Zusage und Bezahlung bleiben bei deinem Verein.</p>
+              {formData.place_requests_enabled && <>
+                <label className="field field-wide">
+                  <span>Vergabeverfahren</span>
+                  <select name="allocation_method" value={formData.allocation_method || 'request'} onChange={(event) => setFormData({ ...formData, allocation_method: event.target.value as 'request' | 'lottery', waitlist_enabled: event.target.value === 'lottery' ? false : formData.waitlist_enabled })} aria-invalid={Boolean(fieldErrors.allocation_method)}>
+                    <option value="request">Laufende Platzanfrage</option>
+                    <option value="lottery">Bewerbungszeitraum mit externer Verlosung</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Plätze insgesamt</span>
+                  <input
+                    name="capacity_total"
+                    type="number"
+                    min="1"
+                    max="10000"
+                    value={formData.capacity_total ?? ''}
+                    onChange={(event) => {
+                      const capacity = event.target.value === '' ? undefined : Number(event.target.value);
+                      const remaining = capacity == null ? formData.places_remaining : formData.places_remaining == null ? capacity : Math.min(formData.places_remaining, capacity);
+                      setFormData({ ...formData, capacity_total: capacity, places_remaining: remaining });
+                    }}
+                    aria-invalid={Boolean(fieldErrors.capacity_total)}
+                    required
+                  />
+                </label>
+                <label className="field">
+                  <span>Aktuell freie Plätze</span>
+                  <input name="places_remaining" type="number" min="0" max={formData.capacity_total ?? 10000} value={formData.places_remaining ?? ''} onChange={(event) => setFormData({ ...formData, places_remaining: event.target.value === '' ? undefined : Number(event.target.value) })} aria-invalid={Boolean(fieldErrors.places_remaining)} required />
+                </label>
+                <label className="field">
+                  <span>{formData.allocation_method === 'lottery' ? 'Bewerbungen möglich ab' : 'Anfragen möglich ab (optional)'}</span>
+                  <input name="request_opens_at" type="datetime-local" value={normalizeDateTimeLocal(formData.request_opens_at)} onChange={(event) => setFormData({ ...formData, request_opens_at: event.target.value })} aria-invalid={Boolean(fieldErrors.request_opens_at)} required={formData.allocation_method === 'lottery'} />
+                </label>
+                <label className="field">
+                  <span>Interne Anfrageadresse (optional)</span>
+                  <input name="place_request_email" type="email" maxLength={254} value={formData.place_request_email || ''} onChange={(event) => setFormData({ ...formData, place_request_email: event.target.value })} placeholder={user?.email || 'Konto-E-Mail wird verwendet'} aria-invalid={Boolean(fieldErrors.place_request_email)} />
+                </label>
+                {formData.allocation_method !== 'lottery' && <label className="toggle-field field-wide">
+                  <input name="waitlist_enabled" type="checkbox" checked={Boolean(formData.waitlist_enabled)} onChange={(event) => setFormData({ ...formData, waitlist_enabled: event.target.checked })} />
+                  <span>Bei null freien Plätzen Wartelistenanfragen erlauben</span>
+                </label>}
+                {formData.allocation_method === 'lottery' && <p className="field-wide editor-help">Bewerbungen schließen automatisch am Anmeldeschluss. Verlosung, Nachrücken und Zusagen bearbeitet der Anbieter außerhalb des Portals.</p>}
+              </>}
+            </div>}
+          </section>
+
+          <section className="editor-step field-wide">
             <button className="editor-step-toggle" type="button" onClick={() => setActiveEditorSection('location')} aria-expanded={activeEditorSection === 'location'}>
-              <span><strong>3. Ort &amp; Karte <span className="step-status">{Object.keys(checklist).some((field) => fieldSection[field] === 'location') ? 'Angaben offen' : 'Vollständig'}</span></strong><small>Adresse und Kartenposition</small></span>
+              <span><strong>4. Ort &amp; Karte <span className="step-status">{Object.keys(checklist).some((field) => fieldSection[field] === 'location') ? 'Angaben offen' : 'Vollständig'}</span></strong><small>Adresse und Kartenposition</small></span>
               <ChevronDown size={18} />
             </button>
             {activeEditorSection === 'location' && <div className="editor-step-content dashboard-form-grid">
@@ -642,30 +748,11 @@ export const ClubDashboard: React.FC = () => {
 
           <section className="editor-step field-wide">
             <button className="editor-step-toggle" type="button" onClick={() => setActiveEditorSection('images')} aria-expanded={activeEditorSection === 'images'}>
-              <span><strong>4. Bilder <span className="step-status">{selectedFiles.length || formData.images?.length ? 'Bilder gewählt' : 'Optional'}</span></strong><small>Vorschaubild und Galerie</small></span>
+              <span><strong>5. Bilder <span className="step-status">{selectedFiles.length || formData.images?.length ? 'Bilder gewählt' : 'Optional'}</span></strong><small>Vorschaubild und Galerie</small></span>
               <ChevronDown size={18} />
             </button>
             {activeEditorSection === 'images' && <div className="editor-step-content dashboard-form-grid">
-          {isEditing && Boolean(formData.images?.length) && (
-            <div className="field field-wide">
-              <span>Vorhandene Bilder</span>
-              <ul className="image-management-list">
-                {formData.images?.map((image, index) => (
-                  <li key={image}>
-                    <img src={image} alt={`Bild ${index + 1} zu ${formData.title || 'dieser Freizeit'}`} />
-                    <button
-                      className="danger-action"
-                      type="button"
-                      onClick={() => { if (formData.id && window.confirm('Dieses Bild sofort löschen? Andere ungespeicherte Änderungen bleiben erhalten.')) void handleDeleteImage(formData.id, image); }}
-                      aria-label={`Bild ${index + 1} löschen`}
-                    >
-                      <Trash2 size={17} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <ExistingImages images={formData.image_metadata || []} onChange={image_metadata => setFormData(current => ({ ...current, image_metadata }))} onDelete={url => { if (formData.id) void handleDeleteImage(formData.id, url); }} />
           <ImageSelection files={selectedFiles} onChange={setSelectedFiles} existingCount={formData.images?.length || 0} />
             </div>}
           </section>
@@ -674,7 +761,7 @@ export const ClubDashboard: React.FC = () => {
             <button type="button" className="secondary-action" disabled={activeEditorSection === 'images'} onClick={() => {
               const issues = Object.fromEntries(Object.entries(checklist).filter(([field]) => fieldSection[field] === activeEditorSection));
               if (Object.keys(issues).length) { focusError(issues); setFormError('Bitte prüfe diesen Abschnitt. Als Entwurf kannst du jederzeit speichern.'); return; }
-              setActiveEditorSection(editorSections[Math.min(3, editorSections.indexOf(activeEditorSection) + 1)]);
+              setActiveEditorSection(editorSections[Math.min(editorSections.length - 1, editorSections.indexOf(activeEditorSection) + 1)]);
             }}>Weiter</button>
           </div>
           <div className="form-actions editor-actions">
@@ -722,7 +809,7 @@ export const ClubDashboard: React.FC = () => {
               </>
             )}
           </div>
-        </form>
+        </AccessibleForm>
       </section>
       )}
 
@@ -795,6 +882,22 @@ export const ClubDashboard: React.FC = () => {
                       {camp.status === 'published' ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
                       {getStatusLabel(camp.status)}
                     </span>
+                    {camp.place_requests_enabled && camp.capacity_total != null && camp.places_remaining != null && (
+                      <div className="availability-quick-edit">
+                        <span><strong>{camp.places_remaining}</strong> von {camp.capacity_total} Plätzen frei · {camp.allocation_method === 'lottery' ? 'Bewerbung/Los' : 'Platzanfrage'}</span>
+                        <label>
+                          Freie Plätze
+                          <input
+                            type="number"
+                            min="0"
+                            max={camp.capacity_total}
+                            value={availabilityDrafts[camp.id] ?? camp.places_remaining}
+                            onChange={(event) => setAvailabilityDrafts((current) => ({ ...current, [camp.id]: Number(event.target.value) }))}
+                          />
+                        </label>
+                        <button className="secondary-action" type="button" onClick={() => void updateAvailability(camp)} disabled={availabilityDrafts[camp.id] === undefined || availabilityDrafts[camp.id] === camp.places_remaining}>Bestand speichern</button>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="item-actions">

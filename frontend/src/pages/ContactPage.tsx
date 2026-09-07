@@ -1,14 +1,17 @@
+import { AccessibleForm } from '../components/AccessibleForm';
 import { apiFetch } from '../utils/api';
+import { useSearchParams } from 'react-router-dom';
 import React, { useState } from 'react';
 import { Mail, MessageSquare, Send, UserRound } from 'lucide-react';
 
 const successMessage = 'Danke, deine Nachricht wurde übermittelt. Wir melden uns bei Bedarf per E-Mail.';
 
 export const ContactPage: React.FC = () => {
+  const [params] = useSearchParams();
   const [formStartedAt] = useState(() => Date.now());
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(() => params.get('anliegen') === 'barrierefreiheit' ? 'Ich möchte eine Barriere melden.\n\nBetroffene Seite:\n\nBei diesem Schritt tritt das Problem auf:\n\nBeschreibung des Problems:\n' : '');
   const [website, setWebsite] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -61,7 +64,7 @@ export const ContactPage: React.FC = () => {
           <p>Fragen zur Plattform, Hinweise zu Einträgen oder technische Probleme erreichen das Betreiberteam direkt.</p>
         </div>
 
-        <form className="contact-form" onSubmit={handleSubmit}>
+        <AccessibleForm className="contact-form" onSubmit={handleSubmit}>
           {error && <p className="alert" role="alert">{error}</p>}
           {success && <p className="success-alert" role="status">{success}</p>}
 
@@ -125,7 +128,7 @@ export const ContactPage: React.FC = () => {
             <Send size={18} />
             {isSubmitting ? 'Wird gesendet...' : 'Nachricht senden'}
           </button>
-        </form>
+        </AccessibleForm>
       </section>
     </div>
   );

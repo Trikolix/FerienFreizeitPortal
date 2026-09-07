@@ -1,6 +1,9 @@
+import { AccessibleForm } from '../components/AccessibleForm';
+import { ExistingImages } from '../components/ExistingImages';
+import { appendImages, saveImageDescriptions, descriptionsComplete, fileDescription, type ImageMetadata } from '../utils/imageMetadata';
 import { ImageSelection } from '../components/ImageSelection';
 import { useAction } from '../utils/useAction';
-import { apiFetch } from '../utils/api';
+import { ApiError, apiFetch } from '../utils/api';
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Pencil, ShieldCheck, Trash2, UserPlus, CheckCircle2, Eye, XCircle, ImagePlus, Tag, ChevronDown } from 'lucide-react';
@@ -36,6 +39,7 @@ interface Camp {
   registration_deadline: string;
   status: 'draft' | 'published' | 'fully_booked' | 'archived';
   images?: string[];
+  image_metadata?: ImageMetadata[];
 }
 
 interface ClubUser {
@@ -103,6 +107,22 @@ export const AdminDashboard: React.FC = () => {
 
   const [editingCampId, setEditingCampId] = useState<number | null>(null);
   const [campEditData, setCampEditData] = useState<Partial<Camp>>({});
+  const [campFieldErrors, setCampFieldErrors] = useState<Record<string, string>>({});
+  const campEditorRef = useRef<HTMLElement>(null);
+  const focusCampField = (field: string) => {
+    const root = campEditorRef.current;
+    const key = CSS.escape(field);
+    const target = root?.querySelector<HTMLElement>(`[name="${key}"], [data-field="${key}"] .ql-editor, [data-field="${key}"] textarea, [data-field="${key}"]`);
+    (target || root)?.focus();
+  };
+  useEffect(() => {
+    const field = Object.keys(campFieldErrors)[0];
+    if (busy || !field) return;
+    const root = campEditorRef.current;
+    const key = CSS.escape(field);
+    const target = root?.querySelector<HTMLElement>(`[name="${key}"], [data-field="${key}"] .ql-editor, [data-field="${key}"] textarea, [data-field="${key}"]`);
+    (target || root)?.focus();
+  }, [campFieldErrors, busy]);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [formError, setFormError] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -211,6 +231,7 @@ export const AdminDashboard: React.FC = () => {
 
   const handleEditCamp = (camp: Camp) => {
     if (dirty && !window.confirm('Ungespeicherte Änderungen verwerfen?')) return;
+    setCampFieldErrors({});
     setInitialCamp(JSON.stringify(camp));
     setEditingCampId(camp.id);
     setCampEditData(camp);
@@ -221,6 +242,7 @@ export const AdminDashboard: React.FC = () => {
 
   const handleSaveCamp = (event: React.FormEvent) => runAction(async () => {
     event.preventDefault();
+    setCampFieldErrors({});
     setFormError('');
 
     const startsAt = parseFormDate(campEditData.starts_at);
@@ -229,6 +251,8 @@ export const AdminDashboard: React.FC = () => {
 
     if (startsAt && endsAt && endsAt <= startsAt) {
       setFormError('Das Ende der Freizeit muss nach dem Beginn liegen.');
+      setCampFieldErrors({ ends_at: 'Das Ende der Freizeit muss nach dem Beginn liegen.' });
+      requestAnimationFrame(() => focusCampField('ends_at'));
       return;
     }
     if (registrationDeadline && startsAt && registrationDeadline >= startsAt) {
@@ -237,6 +261,13 @@ export const AdminDashboard: React.FC = () => {
     }
 
     try {
+      if (['published', 'fully_booked'].includes(campEditData.status ?? '') && !descriptionsComplete([...(campEditData.image_metadata || []), ...selectedFiles.map(fileDescription)])) {
+        setFormError('Bitte alle Bilder beschreiben oder als dekorativ kennzeichnen.');
+        setCampFieldErrors({ images: 'Bitte alle Bilder beschreiben oder als dekorativ kennzeichnen.' });
+        requestAnimationFrame(() => focusCampField('images'));
+        return;
+      }
+      await saveImageDescriptions(editingCampId!, campEditData.image_metadata);
       const response = await apiFetch(`/api/camps/${editingCampId}`, {
         method: 'PUT',
         headers: {
@@ -253,7 +284,7 @@ export const AdminDashboard: React.FC = () => {
       setNotice('Freizeitdaten gespeichert. Ausgewählte Bilder werden anschließend hochgeladen.');
       if (selectedFiles?.length) {
         const imageData = new FormData();
-        Array.from(selectedFiles).forEach((file) => imageData.append('images[]', file));
+        appendImages(imageData, selectedFiles);
         await apiFetch(`/api/camps/${editingCampId}/images`, {
           method: 'POST',
 
@@ -267,6 +298,10 @@ export const AdminDashboard: React.FC = () => {
       fetchCamps();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Fehler beim Speichern');
+      if (err instanceof ApiError && Object.keys(err.fields).length) {
+        setCampFieldErrors(err.fields);
+        requestAnimationFrame(() => focusCampField(Object.keys(err.fields)[0]));
+      }
     }
   });
 
@@ -281,7 +316,8 @@ export const AdminDashboard: React.FC = () => {
       });
       setCampEditData(current => ({
         ...current,
-        images: current.images?.filter(img => img !== imageUrl)
+        images: current.images?.filter(img => img !== imageUrl),
+        image_metadata: current.image_metadata?.filter(image => image.image_url !== imageUrl)
       }));
       fetchCamps();
     } catch (error) {
@@ -457,7 +493,7 @@ export const AdminDashboard: React.FC = () => {
             {error}
           </p>
         )}
-        <form className="dashboard-form" onSubmit={handleSubmit} aria-describedby={error ? 'admin-form-error' : undefined}>
+        <AccessibleForm className="dashboard-form" onSubmit={handleSubmit} aria-describedby={error ? 'admin-form-error' : undefined}>
           <label className="field">
             <span>E-Mail</span>
             <input type="email" value={formData.email} onChange={(event) => setFormData({ ...formData, email: event.target.value })} required />
@@ -483,14 +519,14 @@ export const AdminDashboard: React.FC = () => {
               Einladung senden
             </button>
           </div>
-        </form>
+        </AccessibleForm>
       </section>
 
       <section className="list-panel">
         <div className="section-heading">
           <h2>Ferien verwalten</h2>
         </div>
-        <form className="admin-form compact" onSubmit={async (e) => {
+        <AccessibleForm className="admin-form compact" onSubmit={async (e) => {
           e.preventDefault();
           if (!csrfToken || isCreatingHoliday) return;
           setIsCreatingHoliday(true);
@@ -523,7 +559,7 @@ export const AdminDashboard: React.FC = () => {
         }}>
           <div className="admin-holiday-grid">
             <label className="field">
-              <span>Name (z.B. Sommerferien 2024)</span>
+              <span>Name des Ferienzeitraums</span>
               <input type="text" value={newHolidayName} onChange={(e) => setNewHolidayName(e.target.value)} required />
             </label>
             <label className="field">
@@ -538,7 +574,7 @@ export const AdminDashboard: React.FC = () => {
               Speichern
             </button>
           </div>
-        </form>
+        </AccessibleForm>
         {holidays.length === 0 ? (
           <p className="empty-line">Keine Ferien angelegt.</p>
         ) : (
@@ -588,7 +624,7 @@ export const AdminDashboard: React.FC = () => {
               <li key={club.id} className="club-card">
                 <span className="club-icon"><Building2 size={21} /></span>
                 {editingUserId === club.id ? (
-                  <form className="inline-edit-form user-edit-form" onSubmit={(event) => handleSaveUser(event, club)}>
+                  <AccessibleForm className="inline-edit-form user-edit-form" onSubmit={(event) => handleSaveUser(event, club)}>
                     <label className="field">
                       <span>Name / Verein</span>
                       <input
@@ -620,7 +656,7 @@ export const AdminDashboard: React.FC = () => {
                       <button className="primary-action" type="submit">Speichern</button>
                       <button className="secondary-action" type="button" onClick={() => setEditingUserId(null)}>Abbrechen</button>
                     </div>
-                  </form>
+                  </AccessibleForm>
                 ) : (
                   <>
                     <h3>{club.display_name || club.club_name || club.email}</h3>
@@ -696,22 +732,23 @@ export const AdminDashboard: React.FC = () => {
       </section>
 
       {editingCampId && (
-        <section className="form-panel">
+        <section className="form-panel" ref={campEditorRef} tabIndex={-1}>
           <div className="section-heading">
             <h2>Freizeit bearbeiten</h2>
             <span>Änderungen als Admin speichern</span>
           </div>
           {formError && <p className="alert" role="alert">{formError}</p>}
-          <form className="dashboard-form" noValidate onSubmit={handleSaveCamp}>
+          <AccessibleForm className="dashboard-form" noValidate onSubmit={handleSaveCamp}>
+            {Object.keys(campFieldErrors).length > 0 && <ul className="validation-summary" aria-label="Bitte prüfe diese Angaben">{Object.entries(campFieldErrors).map(([field, message]) => <li key={field} id={`admin-error-${field}`}><button type="button" onClick={() => focusCampField(field)}>{message}</button></li>)}</ul>}
             <label className="field">
               <span>Titel</span>
-              <input type="text" value={campEditData.title || ''} onChange={(e) => setCampEditData({ ...campEditData, title: e.target.value })} required />
+              <input type="text" name="title" aria-invalid={Boolean(campFieldErrors.title)} aria-describedby={campFieldErrors.title ? 'admin-error-title' : undefined} value={campEditData.title || ''} onChange={(e) => setCampEditData({ ...campEditData, title: e.target.value })} required />
             </label>
 
             <div className="field">
               <span>Kategorien</span>
               <div className="multi-select-container" ref={typeDropdownRef}>
-                <button type="button" aria-expanded={isTypeDropdownOpen} aria-label="Kategorien wählen"
+                <button type="button" name="categories" aria-invalid={Boolean(campFieldErrors.categories)} aria-describedby={campFieldErrors.categories ? "admin-error-categories" : undefined} aria-expanded={isTypeDropdownOpen} aria-label="Kategorien wählen"
                   className="multi-select-trigger"
                   onClick={() => setIsTypeDropdownOpen(!isTypeDropdownOpen)}
                 >
@@ -751,68 +788,56 @@ export const AdminDashboard: React.FC = () => {
 
             <label className="field">
               <span>Mindestalter</span>
-              <input type="number" value={campEditData.min_age ?? ''} onChange={(e) => setCampEditData({ ...campEditData, min_age: Number(e.target.value) })} required />
+              <input type="number" name="min_age" aria-invalid={Boolean(campFieldErrors.min_age)} aria-describedby={campFieldErrors.min_age ? 'admin-error-min_age' : undefined} value={campEditData.min_age ?? ''} onChange={(e) => setCampEditData({ ...campEditData, min_age: Number(e.target.value) })} required />
             </label>
             <label className="field">
               <span>Höchstalter</span>
-              <input type="number" value={campEditData.max_age ?? ''} onChange={(e) => setCampEditData({ ...campEditData, max_age: Number(e.target.value) })} required />
+              <input type="number" name="max_age" aria-invalid={Boolean(campFieldErrors.max_age)} aria-describedby={campFieldErrors.max_age ? 'admin-error-max_age' : undefined} value={campEditData.max_age ?? ''} onChange={(e) => setCampEditData({ ...campEditData, max_age: Number(e.target.value) })} required />
             </label>
-            <div className="field field-wide">
+            <div className="field field-wide" data-field="description">
               <span>Beschreibung</span>
-              <RichTextEditor value={campEditData.description || ''} onChange={(val: string) => setCampEditData({ ...campEditData, description: val })} />
+              <RichTextEditor errorId={campFieldErrors.description ? "admin-error-description" : undefined} value={campEditData.description || ''} onChange={(val: string) => setCampEditData({ ...campEditData, description: val })} />
             </div>
             <label className="field field-wide">
               <span>Ort</span>
-              <input type="text" value={campEditData.location_text || ''} onChange={(e) => setCampEditData({ ...campEditData, location_text: e.target.value })} required />
+              <input type="text" name="location_text" aria-invalid={Boolean(campFieldErrors.location_text)} aria-describedby={campFieldErrors.location_text ? 'admin-error-location_text' : undefined} value={campEditData.location_text || ''} onChange={(e) => setCampEditData({ ...campEditData, location_text: e.target.value })} required />
             </label>
             <label className="field">
               <span>Beginn</span>
-              <input type="datetime-local" value={normalizeDateTimeLocal(campEditData.starts_at)} onChange={(e) => setCampEditData({ ...campEditData, starts_at: e.target.value })} required />
+              <input type="datetime-local" name="starts_at" aria-invalid={Boolean(campFieldErrors.starts_at)} aria-describedby={campFieldErrors.starts_at ? 'admin-error-starts_at' : undefined} value={normalizeDateTimeLocal(campEditData.starts_at)} onChange={(e) => setCampEditData({ ...campEditData, starts_at: e.target.value })} required />
             </label>
             <label className="field">
               <span>Ende</span>
-              <input type="datetime-local" value={normalizeDateTimeLocal(campEditData.ends_at)} onChange={(e) => setCampEditData({ ...campEditData, ends_at: e.target.value })} required />
+              <input type="datetime-local" name="ends_at" aria-invalid={Boolean(campFieldErrors.ends_at)} aria-describedby={campFieldErrors.ends_at ? 'admin-error-ends_at' : undefined} value={normalizeDateTimeLocal(campEditData.ends_at)} onChange={(e) => setCampEditData({ ...campEditData, ends_at: e.target.value })} required />
             </label>
             <label className="field">
               <span>Preis (€)</span>
-              <input type="number" step="0.01" value={campEditData.price_eur ?? ''} onChange={(e) => setCampEditData({ ...campEditData, price_eur: Number(e.target.value) })} required />
+              <input type="number" step="0.01" name="price_eur" aria-invalid={Boolean(campFieldErrors.price_eur)} aria-describedby={campFieldErrors.price_eur ? 'admin-error-price_eur' : undefined} value={campEditData.price_eur ?? ''} onChange={(e) => setCampEditData({ ...campEditData, price_eur: Number(e.target.value) })} required />
             </label>
             <label className="field">
               <span>Anmeldeschluss</span>
-              <input type="datetime-local" value={normalizeDateTimeLocal(campEditData.registration_deadline)} onChange={(e) => setCampEditData({ ...campEditData, registration_deadline: e.target.value })} required />
+              <input type="datetime-local" name="registration_deadline" aria-invalid={Boolean(campFieldErrors.registration_deadline)} aria-describedby={campFieldErrors.registration_deadline ? 'admin-error-registration_deadline' : undefined} value={normalizeDateTimeLocal(campEditData.registration_deadline)} onChange={(e) => setCampEditData({ ...campEditData, registration_deadline: e.target.value })} required />
             </label>
             <label className="field">
-              <span>Latitude</span>
-              <input type="number" step="any" value={campEditData.location_lat ?? ''} onChange={(e) => setCampEditData({ ...campEditData, location_lat: Number(e.target.value) })} />
+              <span>Breitengrad</span>
+              <input type="number" step="any" name="location_lat" aria-invalid={Boolean(campFieldErrors.location_lat)} aria-describedby={campFieldErrors.location_lat ? 'admin-error-location_lat' : undefined} value={campEditData.location_lat ?? ''} onChange={(e) => setCampEditData({ ...campEditData, location_lat: Number(e.target.value) })} />
             </label>
             <label className="field">
-              <span>Longitude</span>
-              <input type="number" step="any" value={campEditData.location_lng ?? ''} onChange={(e) => setCampEditData({ ...campEditData, location_lng: Number(e.target.value) })} />
+              <span>Längengrad</span>
+              <input type="number" step="any" name="location_lng" aria-invalid={Boolean(campFieldErrors.location_lng)} aria-describedby={campFieldErrors.location_lng ? 'admin-error-location_lng' : undefined} value={campEditData.location_lng ?? ''} onChange={(e) => setCampEditData({ ...campEditData, location_lng: Number(e.target.value) })} />
             </label>
             <div className="field field-wide">
               <span>Position auf Karte</span>
               <MapPicker lat={campEditData.location_lat} lng={campEditData.location_lng} onChange={(lat, lng) => setCampEditData({ ...campEditData, location_lat: lat, location_lng: lng })} />
             </div>
-            {campEditData.images?.length ? (
-              <div className="field field-wide">
-                <span>Bilder</span>
-                <ul className="image-management-list">
-                  {campEditData.images.map(img => (
-                    <li key={img}>
-                      <img src={img} alt="" />
-                      <button className="danger-action" type="button" aria-label="Bild löschen" onClick={() => { if (window.confirm('Dieses Bild sofort löschen?')) void handleDeleteImage(editingCampId!, img); }}><Trash2 size={17} /></button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
+            <ExistingImages images={campEditData.image_metadata || []} onChange={image_metadata => setCampEditData(current => ({ ...current, image_metadata }))} onDelete={url => { if (editingCampId) void handleDeleteImage(editingCampId, url); }} />
             <ImageSelection files={selectedFiles} onChange={setSelectedFiles} existingCount={campEditData.images?.length || 0} />
             <div className="form-actions">
               <button className="primary-action" type="submit">Speichern</button>
               <button className="secondary-action" type="button" onClick={() => { if (!dirty || window.confirm('Ungespeicherte Änderungen verwerfen?')) setEditingCampId(null); }}>Abbrechen</button>
               <button className="secondary-action" type="button" aria-label="Freizeitvorschau" onClick={() => setIsPreviewOpen(true)}><Eye size={18} /></button>
             </div>
-          </form>
+          </AccessibleForm>
         </section>
       )}
 

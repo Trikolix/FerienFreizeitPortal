@@ -1,3 +1,4 @@
+import { AccessibleForm } from '../components/AccessibleForm';
 import { useAction } from '../utils/useAction';
 import { apiFetch } from '../utils/api';
 import React, { useState } from 'react';
@@ -35,10 +36,10 @@ export const ForgotPasswordPage: React.FC = () => {
   return (
     <div className="auth-page">
       <section className="auth-card single">
-        <form className="auth-form" onSubmit={handleSubmit}>
+        <AccessibleForm className="auth-form" onSubmit={handleSubmit}>
           <div>
             <span className="eyebrow">Passwort</span>
-            <h2>Passwort zurücksetzen</h2>
+            <h1>Passwort zurücksetzen</h1>
             <p>Du erhältst einen Link, über den du ein neues Passwort festlegen kannst.</p>
           </div>
           {error && <p className="alert" role="alert">{error}</p>}
@@ -52,7 +53,7 @@ export const ForgotPasswordPage: React.FC = () => {
           </label>
           <button className="primary-action" type="submit" disabled={busy}>Link anfordern</button>
           <Link className="secondary-action auth-link" to="/login">Zur Anmeldung</Link>
-        </form>
+        </AccessibleForm>
       </section>
     </div>
   );

@@ -28,7 +28,7 @@ const LocationMarker = ({ lat, lng, onChange }: MapPickerProps) => {
   }, [lat, lng, map]);
 
   return lat != null && lng != null ? (
-    <Marker position={[lat, lng]} />
+    <Marker position={[lat, lng]} title="Gewählte Freizeitposition" alt="Gewählte Freizeitposition" />
   ) : null;
 };
 
@@ -44,7 +44,7 @@ export const MapPicker: React.FC<MapPickerProps> = ({ lat, lng, onChange }) => {
         />
         <LocationMarker lat={lat} lng={lng} onChange={onChange} />
       </MapContainer>
-      <p>Klicke in die Karte, um die Position festzulegen.</p>
+      <p>Optional: Wähle eine Position in der Karte. Ohne Karte kannst du die beschrifteten Felder für Breitengrad und Längengrad verwenden.</p>
     </div>
   );
 };

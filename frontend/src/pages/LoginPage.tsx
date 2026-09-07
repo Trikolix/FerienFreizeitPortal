@@ -1,3 +1,4 @@
+import { AccessibleForm } from '../components/AccessibleForm';
 import { apiFetch } from '../utils/api';
 import React, { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -46,13 +47,13 @@ export const LoginPage: React.FC<{ onAuthenticated?: () => void; expectedUserId?
       <section className="auth-card">
         <div className="auth-visual" aria-hidden="true">
           <span className="auth-badge">Vereinsbereich</span>
-          <h1>Angebote pflegen, veröffentlichen und aktuell halten.</h1>
+          <p>Angebote pflegen, veröffentlichen und aktuell halten.</p>
         </div>
 
-        <form className="auth-form" onSubmit={handleSubmit}>
+        <AccessibleForm className="auth-form" onSubmit={handleSubmit}>
           <div>
             <span className="eyebrow">Login</span>
-            <h2>Für Jugendvereine</h2>
+            <h1>Für Jugendvereine</h1>
             <p>Nach der Anmeldung kannst du Freizeiten verwalten und neue Angebote einstellen.</p>
           </div>
 
@@ -98,7 +99,7 @@ export const LoginPage: React.FC<{ onAuthenticated?: () => void; expectedUserId?
           <Link className="secondary-action auth-link" to="/passwort-vergessen">
             Passwort vergessen
           </Link>
-        </form>
+        </AccessibleForm>
       </section>
     </div>
   );

@@ -11,7 +11,11 @@ import { AccountSettingsPage } from './pages/AccountSettingsPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { SetPasswordPage } from './pages/SetPasswordPage';
 import { ContactPage } from './pages/ContactPage';
+import { DatenschutzPage } from './pages/DatenschutzPage';
 import './index.css';
+import { MotionConfig } from 'framer-motion';
+import { AccessibilityPage } from './pages/AccessibilityPage';
+import { NotFoundPage } from './pages/NotFoundPage';
 
 const ClubDashboard = lazy(() => import('./pages/ClubDashboard').then((m) => ({ default: m.ClubDashboard })));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard').then((m) => ({ default: m.AdminDashboard })));
@@ -27,7 +31,7 @@ export const App: React.FC = () => {
   }, [initialize]);
   if (!initialized) return <p role="status">Portal wird geladen …</p>;
   return (
-    <BrowserRouter>
+    <MotionConfig reducedMotion="user"><BrowserRouter>
       {error && <p className="alert" role="alert">{error} <button onClick={() => void initialize()}>Erneut versuchen</button></p>}
       {expired && <Modal title="Bitte erneut anmelden" onClose={() => setExpired(false)}>
         <p>Deine Anmeldung ist abgelaufen. Melde dich erneut an und speichere anschließend deine erhaltenen Eingaben.</p>
@@ -46,10 +50,13 @@ export const App: React.FC = () => {
           <Route path="admin" element={<AdminDashboard />} />
           <Route path="einstellungen" element={<AccountSettingsPage />} />
           <Route path="impressum" element={<Impressum />} />
+          <Route path="datenschutz" element={<DatenschutzPage />} />
+          <Route path="barrierefreiheit" element={<AccessibilityPage />} />
+          <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>
       </Suspense>
-    </BrowserRouter>
+    </BrowserRouter></MotionConfig>
   );
 };
 

@@ -4,6 +4,7 @@ import { MapContainer, Marker, Popup, TileLayer, useMapEvents } from 'react-leaf
 import 'leaflet/dist/leaflet.css';
 import '../utils/leafletIcons';
 import type { Camp } from '../pages/SearchPage';
+import { availabilityLabel } from '../utils/placeRequests';
 
 
 
@@ -49,7 +50,7 @@ export const SearchMap: React.FC<SearchMapProps> = ({ camps, setBounds }) => {
         />
         <MapBoundsEvents onBoundsChange={setBounds} />
         {camps.filter((camp) => camp.location_lat != null && camp.location_lng != null).map((camp) => (
-          <Marker key={camp.id} position={[camp.location_lat, camp.location_lng]}>
+          <Marker key={camp.id} position={[camp.location_lat, camp.location_lng]} title={camp.title} alt={`Freizeit: ${camp.title}`}>
             <Popup>
               <strong className="map-popup-title">{camp.title}</strong>
               <span className="map-popup-line">{camp.club_name}</span>
@@ -64,6 +65,7 @@ export const SearchMap: React.FC<SearchMapProps> = ({ camps, setBounds }) => {
                 </span>
               )}
               <span className="map-popup-line">{camp.min_age}-{camp.max_age} Jahre</span>
+              {availabilityLabel(camp) && <span className="map-popup-line"><strong>{availabilityLabel(camp)}</strong></span>}
               <Link to={`/freizeiten/${camp.id}`} state={{ search: location.search.replace(/^\?/, '') }} className="map-popup-link">
                 Details ansehen
               </Link>

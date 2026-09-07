@@ -1,3 +1,4 @@
+import { AccessibleForm } from '../components/AccessibleForm';
 import { useAction } from '../utils/useAction';
 import { apiFetch } from '../utils/api';
 import React, { useMemo, useState } from 'react';
@@ -50,10 +51,10 @@ export const SetPasswordPage: React.FC = () => {
   return (
     <div className="auth-page">
       <section className="auth-card single">
-        <form className="auth-form" onSubmit={handleSubmit}>
+        <AccessibleForm className="auth-form" onSubmit={handleSubmit}>
           <div>
             <span className="eyebrow">{purpose === 'invite' ? 'Aktivierung' : 'Passwort'}</span>
-            <h2>{purpose === 'invite' ? 'Account aktivieren' : 'Neues Passwort setzen'}</h2>
+            <h1>{purpose === 'invite' ? 'Account aktivieren' : 'Neues Passwort setzen'}</h1>
             <p>Wähle ein neues Passwort für dein Konto.</p>
           </div>
           {!token && <p className="alert" role="alert">Der Link enthält keinen gültigen Token.</p>}
@@ -75,7 +76,7 @@ export const SetPasswordPage: React.FC = () => {
           </label>
           <button className="primary-action" type="submit" disabled={!token || busy || Boolean(message)}>Passwort speichern</button>
           {message && <Link className="secondary-action auth-link" to="/login">Zur Anmeldung</Link>}
-        </form>
+        </AccessibleForm>
       </section>
     </div>
   );

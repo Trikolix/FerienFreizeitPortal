@@ -37,7 +37,28 @@ final class SecurityTest extends TestCase {
     }
 
     public function testPublicPayloadDoesNotExposeAccountIdentifiers(): void {
-        $public = publicCampPayload(['id' => 1, 'title' => 'Camp', 'username' => 'private@example.test', 'club_id' => 4, 'password_hash' => 'x', 'contact_info' => 'Public contact']);
-        self::assertSame(['id' => 1, 'title' => 'Camp', 'contact_info' => 'Public contact'], $public);
+        $public = publicCampPayload(['id' => 1, 'title' => 'Camp', 'username' => 'private@example.test', 'club_id' => 4, 'password_hash' => 'x', 'contact_info' => 'Public contact', 'place_request_email' => 'bookings@example.test', 'capacity_total' => 20, 'places_remaining' => 2, 'place_requests_enabled' => true, 'availability_state' => 'few_places']);
+        self::assertSame(['id' => 1, 'title' => 'Camp', 'contact_info' => 'Public contact', 'availability_state' => 'few_places'], $public);
+        self::assertArrayNotHasKey('place_requests_enabled', $public);
+        self::assertArrayNotHasKey('place_request_email', $public);
+        self::assertArrayNotHasKey('capacity_total', $public);
+        self::assertArrayNotHasKey('places_remaining', $public);
+    }
+
+    public function testPublishedPlaceRequestSettingsAreValidatedAndSynchronizeStatus(): void {
+        $base = [
+            'title' => 'Camp', 'description' => '<p>Beschreibung</p>', 'categories' => ['Natur'],
+            'min_age' => 8, 'max_age' => 16, 'location_text' => 'Zwickau',
+            'starts_at' => '2035-08-01T10:00', 'ends_at' => '2035-08-08T12:00',
+            'registration_deadline' => '2035-07-01T12:00', 'price_eur' => 0,
+            'status' => 'published', 'place_requests_enabled' => true,
+            'allocation_method' => 'request', 'capacity_total' => 20, 'places_remaining' => 0,
+        ];
+        [$clean, $errors] = validateCampPayload($base, ['contact_info' => 'Kontakt', 'email' => 'club@example.test']);
+        self::assertSame([], $errors);
+        self::assertSame('fully_booked', $clean['status']);
+
+        [, $lotteryErrors] = validateCampPayload([...$base, 'allocation_method' => 'lottery'], ['contact_info' => 'Kontakt', 'email' => 'club@example.test']);
+        self::assertArrayHasKey('request_opens_at', $lotteryErrors);
     }
 }

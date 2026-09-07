@@ -1,3 +1,4 @@
+import { AccessibleForm } from '../components/AccessibleForm';
 import { useAction } from '../utils/useAction';
 import { apiFetch } from '../utils/api';
 import React, { useEffect, useState } from 'react';
@@ -125,7 +126,7 @@ export const AccountSettingsPage: React.FC = () => {
         {error && <p className="alert" role="alert">{error}</p>}
         {message && <p className="success-alert" role="status">{message}</p>}
         <div className="public-profile-layout">
-          <form className="settings-form" onSubmit={handleProfileSubmit}>
+          <AccessibleForm className="settings-form" onSubmit={handleProfileSubmit}>
             <label className="field">
               <span>Name des Vereins / Anbieters</span>
               <input type="text" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
@@ -135,7 +136,7 @@ export const AccountSettingsPage: React.FC = () => {
               <textarea value={contactInfo} onChange={(event) => setContactInfo(event.target.value)} placeholder="z. B. E-Mail-Adresse, Telefonnummer und Ansprechperson" />
             </label>
             <button className="primary-action" type="submit" disabled={busy}><Save size={18} /> Öffentliche Angaben speichern</button>
-          </form>
+          </AccessibleForm>
           <aside className="public-profile-preview" aria-label="Vorschau der öffentlichen Angaben">
             <span>So sehen Familien dein Angebot</span>
             <strong>{displayName || 'Name des Vereins'}</strong>
@@ -155,7 +156,7 @@ export const AccountSettingsPage: React.FC = () => {
         {!isPasswordFormOpen ? (
           <button className="secondary-action" type="button" onClick={() => setIsPasswordFormOpen(true)}><KeyRound size={18} /> Passwort ändern</button>
         ) : (
-          <form className="password-change-form" onSubmit={handlePasswordSubmit}>
+          <AccessibleForm className="password-change-form" onSubmit={handlePasswordSubmit}>
             {passwordError && <p className="alert" role="alert">{passwordError}</p>}
             <label className="field">
               <span>Aktuelles Passwort</span>
@@ -173,7 +174,7 @@ export const AccountSettingsPage: React.FC = () => {
               <button className="primary-action" type="submit" disabled={busy}>Passwort speichern</button>
               <button className="secondary-action" type="button" onClick={() => { setIsPasswordFormOpen(false); setCurrentPassword(''); setNewPassword(''); setPasswordConfirmation(''); setPasswordError(''); }}>Abbrechen</button>
             </div>
-          </form>
+          </AccessibleForm>
         )}
         <Link className="text-link security-reset-link" to="/passwort-vergessen">Passwort vergessen?</Link>
       </section>

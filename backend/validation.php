@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/place_requests.php';
 
 function normalizedDate($value): ?string {
     if ($value === null || $value === '') return null;
@@ -52,6 +53,77 @@ function validateCampPayload(array $data, array $owner, ?array $existing = null)
     }
     if ($clean['starts_at'] && $clean['ends_at'] && $clean['ends_at'] <= $clean['starts_at']) $errors['ends_at'] = 'Das Ende muss nach dem Beginn liegen.';
     if ($clean['starts_at'] && $clean['registration_deadline'] && $clean['registration_deadline'] >= $clean['starts_at']) $errors['registration_deadline'] = 'Der Anmeldeschluss muss vor dem Beginn liegen.';
+    $enabled = placeRequestBool($data['place_requests_enabled'] ?? false);
+    if ($enabled === null) {
+        $errors['place_requests_enabled'] = 'Bitte wähle, ob Platzanfragen aktiviert sind.';
+        $enabled = false;
+    }
+    $clean['place_requests_enabled'] = $enabled ? 1 : 0;
+
+    $allocationMethod = $data['allocation_method'] ?? 'request';
+    if (!is_string($allocationMethod) || !in_array($allocationMethod, ['request', 'lottery'], true)) {
+        $errors['allocation_method'] = 'Bitte wähle ein gültiges Vergabeverfahren.';
+        $allocationMethod = 'request';
+    }
+    $clean['allocation_method'] = $allocationMethod;
+
+    foreach (['capacity_total', 'places_remaining'] as $key) {
+        $value = $data[$key] ?? null;
+        if ($value === '') $value = null;
+        if ($value !== null && (!is_scalar($value) || is_bool($value) || !is_numeric($value) || (float)$value != (int)$value || (int)$value < 0 || (int)$value > 10000)) {
+            $errors[$key] = 'Bitte gib eine ganze Zahl zwischen 0 und 10.000 ein.';
+            $value = null;
+        }
+        $clean[$key] = $value === null ? null : (int)$value;
+    }
+    if ($clean['capacity_total'] !== null && $clean['capacity_total'] < 1) {
+        $errors['capacity_total'] = 'Die Gesamtkapazität muss mindestens 1 betragen.';
+    }
+    if ($clean['capacity_total'] !== null && $clean['places_remaining'] !== null && $clean['places_remaining'] > $clean['capacity_total']) {
+        $errors['places_remaining'] = 'Die freien Plätze dürfen die Gesamtkapazität nicht überschreiten.';
+    }
+
+    $clean['request_opens_at'] = normalizedDate($data['request_opens_at'] ?? null);
+    if (($data['request_opens_at'] ?? '') !== '' && ($data['request_opens_at'] ?? null) !== null && $clean['request_opens_at'] === null) {
+        $errors['request_opens_at'] = 'Bitte gib einen gültigen Beginn mit Uhrzeit ein.';
+    }
+    if ($clean['request_opens_at'] && $clean['registration_deadline'] && $clean['request_opens_at'] >= $clean['registration_deadline']) {
+        $errors['request_opens_at'] = 'Der Anfragebeginn muss vor dem Anmeldeschluss liegen.';
+    }
+
+    $waitlist = placeRequestBool($data['waitlist_enabled'] ?? false);
+    if ($waitlist === null) {
+        $errors['waitlist_enabled'] = 'Bitte wähle eine gültige Wartelistenoption.';
+        $waitlist = false;
+    }
+    $clean['waitlist_enabled'] = $allocationMethod === 'lottery' ? 0 : ($waitlist ? 1 : 0);
+
+    $placeRequestEmail = $data['place_request_email'] ?? '';
+    if (!is_string($placeRequestEmail) || mb_strlen($placeRequestEmail) > 254 || ($placeRequestEmail !== '' && !filter_var(trim($placeRequestEmail), FILTER_VALIDATE_EMAIL))) {
+        $errors['place_request_email'] = 'Bitte gib eine gültige E-Mail-Adresse ein oder lasse das Feld leer.';
+        $placeRequestEmail = '';
+    }
+    $clean['place_request_email'] = trim($placeRequestEmail) ?: null;
+
+    if ($enabled && in_array($status, ['published', 'fully_booked'], true)) {
+        if ($clean['capacity_total'] === null) $errors['capacity_total'] = 'Bitte gib die Gesamtkapazität an.';
+        if ($clean['places_remaining'] === null) $errors['places_remaining'] = 'Bitte gib die aktuell freien Plätze an.';
+        if ($allocationMethod === 'lottery' && !$clean['request_opens_at']) {
+            $errors['request_opens_at'] = 'Für ein Losverfahren ist der Beginn des Bewerbungszeitraums erforderlich.';
+        }
+        $recipient = $clean['place_request_email'] ?: trim((string)($owner['email'] ?? ''));
+        if (!filter_var($recipient, FILTER_VALIDATE_EMAIL)) {
+            $errors['place_request_email'] = 'Bitte hinterlege eine gültige Anfrageadresse oder Konto-E-Mail.';
+        }
+        if ($allocationMethod === 'request' && $clean['places_remaining'] !== null) {
+            $status = $clean['places_remaining'] === 0 ? 'fully_booked' : 'published';
+            $clean['status'] = $status;
+        } elseif ($allocationMethod === 'lottery') {
+            $status = 'published';
+            $clean['status'] = $status;
+        }
+    }
+
     if (in_array($status, ['published', 'fully_booked'], true)) {
         foreach (['title', 'categories', 'description', 'location_text', 'starts_at', 'ends_at', 'registration_deadline'] as $key) {
             if (!$clean[$key] || ($key === 'description' && trim(html_entity_decode(strip_tags($clean[$key]), ENT_QUOTES, 'UTF-8'), " \t\n\r\0\x0B\xc2\xa0") === '')) $errors[$key] = 'Dieses Feld ist zum Veröffentlichen erforderlich.';

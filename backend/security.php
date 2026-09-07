@@ -150,7 +150,7 @@ function sanitizeDescription(string $html): string {
 }
 
 function publicCampPayload(array $camp): array {
-    $fields = ['id', 'title', 'club_name', 'contact_info', 'min_age', 'max_age', 'description', 'type', 'categories', 'location_text', 'location_lat', 'location_lng', 'starts_at', 'ends_at', 'price_eur', 'registration_deadline', 'status', 'lifecycle_state', 'images'];
+    $fields = ['id', 'title', 'club_name', 'contact_info', 'min_age', 'max_age', 'description', 'type', 'categories', 'location_text', 'location_lat', 'location_lng', 'starts_at', 'ends_at', 'price_eur', 'registration_deadline', 'status', 'lifecycle_state', 'images', 'image_metadata', 'allocation_method', 'request_opens_at', 'availability_state'];
     return array_intersect_key($camp, array_flip($fields));
 }
 

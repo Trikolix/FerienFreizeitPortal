@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { ImageDescriptionFields } from './ImageDescriptionFields';
+import { describeFile, fileDescription } from '../utils/imageMetadata';
 import { useImagePreviews } from '../utils/useImagePreviews';
 
 export function ImageSelection({ files, onChange, existingCount = 0 }: { files: File[]; onChange: (files: File[]) => void; existingCount?: number }) {
@@ -21,6 +23,7 @@ export function ImageSelection({ files, onChange, existingCount = 0 }: { files: 
     <ul className="image-management-list">{files.map((file, index) => <li key={`${file.name}-${index}`}>
       <img src={previews[index]} alt={`Vorschau: ${file.name}`} />
       <span>{file.name} ({(file.size / 1024 / 1024).toFixed(1)} MB)</span>
+      <ImageDescriptionFields label={`Bildbeschreibung für ${file.name}`} value={fileDescription(file)} onChange={value => { describeFile(file, value); onChange([...files]); }} />
       <button type="button" className="secondary-action" onClick={() => onChange(files.filter((_, i) => i !== index))}>Auswahl entfernen</button>
     </li>)}</ul>
   </div>;

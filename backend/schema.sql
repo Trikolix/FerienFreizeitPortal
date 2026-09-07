@@ -47,6 +47,13 @@ CREATE TABLE IF NOT EXISTS camps (
     price_eur REAL,
     registration_deadline DATETIME,
     status VARCHAR(20) DEFAULT 'draft',
+    place_requests_enabled BOOLEAN DEFAULT 0,
+    allocation_method VARCHAR(20) DEFAULT 'request',
+    capacity_total INTEGER,
+    places_remaining INTEGER,
+    request_opens_at DATETIME,
+    waitlist_enabled BOOLEAN DEFAULT 0,
+    place_request_email VARCHAR(255),
     FOREIGN KEY(club_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -61,6 +68,8 @@ CREATE TABLE IF NOT EXISTS camp_images (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     camp_id INTEGER NOT NULL,
     image_url TEXT NOT NULL,
+    alt_text VARCHAR(500),
+    is_decorative INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY(camp_id) REFERENCES camps(id) ON DELETE CASCADE
 );
 
@@ -81,4 +90,19 @@ CREATE TABLE IF NOT EXISTS contact_events (
     email_domain VARCHAR(255),
     message_length INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS place_request_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id VARCHAR(64) NOT NULL,
+    camp_id INTEGER NOT NULL,
+    action VARCHAR(32) NOT NULL,
+    reason VARCHAR(64),
+    ip_hash VARCHAR(64) NOT NULL,
+    user_agent TEXT,
+    email_domain VARCHAR(255),
+    message_length INTEGER DEFAULT 0,
+    participant_count INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(camp_id) REFERENCES camps(id) ON DELETE CASCADE
 );

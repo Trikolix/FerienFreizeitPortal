@@ -1,6 +1,6 @@
 # Sicherheits- und UX-Maßnahmen
 
-Stand: 5. September 2026. Umsetzung im vorhandenen React-/PHP-/PDO-Aufbau, ohne Architekturwechsel. Entwicklungsdaten und Git-Historie bleiben erhalten.
+Stand: 6. September 2026. Umsetzung im vorhandenen React-/PHP-/PDO-Aufbau, ohne Architekturwechsel. Entwicklungsdaten und Git-Historie bleiben erhalten.
 
 Priorität: P0 = Sicherheits-/Datenverlustrisiko, P1 = zentrale Alltagsabläufe, P2 = Komfort/Wartbarkeit. Komplexität: S = eng begrenzte Änderung, M = mehrere zusammenhängende Stellen. Die Angaben beschreiben den Umfang, keine feste Stundenplanung.
 
@@ -15,6 +15,7 @@ Priorität: P0 = Sicherheits-/Datenverlustrisiko, P1 = zentrale Alltagsabläufe,
 | P0 | Sichere Veröffentlichung und Uploads | M | Strenge serverseitige Typ-/Längen-/Status-/Datums-/Werteprüfung; Entwürfe dürfen unvollständig sein. MIME/Inhalt/Dimensionen/Anzahl/Größe von Bildern geprüft, Bilder neu kodiert und EXIF entfernt. Fehlerhafte Auswahl wird vollständig abgewiesen. |
 | P0 | Lokale Entwicklung vom Deployment trennen | M | Demo-Seeding nur im Entwicklungsmodus; Produktionsprüfung und erster Admin ohne Standardpasswort. Apache schützt private Dateien, Dockerimages schließen lokale DB/Logs/Config aus. |
 | P0 | Vertrauliche Links nicht protokollieren | S | Kein Mail-Fallback mit Nachrichtentext oder Resetlink; neue Anwendungslogs standardmäßig außerhalb des Webroots. Bestehende Entwicklungslogs bleiben unverändert. |
+| P0 | Platzanfragen datensparsam weiterleiten | M | Teilnehmer- und Kontaktdaten werden nur per Mail an den Anbieter übertragen; die Datenbank hält ausschließlich begrenzte technische Metadaten. Empfängeradresse und Kapazitätszahlen bleiben intern. |
 | P1 | Datenverlust und Doppelklicks vermeiden | M | Gesperrte laufende Aktionen, sichtbare Fehler/Erfolgsmeldungen, Eingaben bei Fehlern erhalten, Inline-Wiederanmeldung. Seitenwechsel lädt Formulare nicht mehr doppelt. Warnung beim Verwerfen/Verlassen geänderter Freizeitformulare. |
 | P1 | Schrittweise Freizeiterstellung verbessern | M | Vollständigkeitsanzeige, gezielter Fokus auf fehlende Felder, Weiter/Zurück, unvollständige Entwürfe speicherbar; optionale Koordinaten. |
 | P1 | Bildauswahl verständlicher machen | M | Limits vor Upload sichtbar, einzelne Dateien aus Auswahl entfernen, lokale Miniaturen und Bilder in der Gesamtvorschau. Bereits kopierte Bilder werden erst nach der letzten Referenz gelöscht. |
@@ -44,5 +45,6 @@ Priorität: P0 = Sicherheits-/Datenverlustrisiko, P1 = zentrale Alltagsabläufe,
 - Warnungen schützen die üblichen Verlassen-/Schließen-Aktionen. Ein Browserabsturz oder erzwungenes Schließen ist ohne vorheriges Speichern weiterhin nicht wiederherstellbar; es wurde bewusst kein Autosave-System eingeführt.
 - Bilder selbst sind öffentlich abrufbare, zufällig benannte Dateien. Keine vertraulichen personenbezogenen Dokumente hochladen. Die Privatheitsprüfung schützt Freizeitdaten/Entwürfe, nicht ein separates geschütztes Dateiarchiv.
 - Das globale Migrations-/Schreib-Lock ist für dieses kleine Portal bewusst einfach gehalten. Einrichtung/Migrationen beim Deployment ohne parallele Requests ausführen; kein neues Migrationsframework.
+- Platzanfragen sind ausdrücklich keine Reservierung. Da Anbieter freie Plätze manuell pflegen, verhindert das Portal keine zeitgleichen externen Zusagen und garantiert keine Echtzeit-Verfügbarkeit.
 
 Ausführbare Prüfungen und Testumgebung: [TESTING.md](TESTING.md).

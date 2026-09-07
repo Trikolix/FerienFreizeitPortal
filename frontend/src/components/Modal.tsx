@@ -9,7 +9,16 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
     const overflow = document.body.style.overflow;
     dialog.showModal();
     document.body.style.overflow = 'hidden';
-    return () => { dialog.close(); document.body.style.overflow = overflow; previousFocus?.focus(); };
+    return () => { dialog.close(); document.body.style.overflow = overflow; if (previousFocus?.isConnected) previousFocus.focus(); };
   }, []);
-  return <dialog ref={ref} className="portal-dialog" aria-label={title} onCancel={(event) => { event.preventDefault(); onClose(); }} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}><div>{children}</div></dialog>;
+  return <dialog ref={ref} className="portal-dialog" aria-label={title} onCancel={(event) => { event.preventDefault(); event.stopPropagation(); onClose(); }} onKeyDown={event => {
+    if (event.key !== 'Tab' || (event.target as HTMLElement).closest('dialog') !== event.currentTarget) return;
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('a[href], button, input, textarea, select, summary, [tabindex]'))
+      .filter(element => !element.matches(':disabled, [tabindex="-1"]') && element.getClientRects().length > 0);
+    const first = controls[0];
+    const last = controls.at(-1);
+    if (!first) { event.preventDefault(); return; }
+    if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  }}><div>{children}</div></dialog>;
 }

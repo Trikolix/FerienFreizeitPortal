@@ -1,6 +1,10 @@
 # Westsachsen Ferienfreizeiten
 
-Regionales Portal für Ferienfreizeiten: Vereine pflegen ihre Angebote, Familien suchen nach Alter, Kategorie, Termin und auf der Karte.
+Regionales Portal für Ferienfreizeiten: Vereine pflegen ihre Angebote und optional Kapazitäten, Familien suchen nach Alter, Kategorie, Termin und auf der Karte und können unverbindliche Platzanfragen senden.
+
+Die Oberfläche verwendet ein gemeinsames responsives Designsystem mit WCAG-2.2-AA als Ziel. Anbieter können Bildbeschreibungen pflegen oder Bilder ausdrücklich als dekorativ kennzeichnen. Bestehende Bilder bleiben erhalten und müssen gegebenenfalls vor einer erneuten Veröffentlichung beschrieben werden. Die Bild-URL-API bleibt kompatibel; Migration 3 ergänzt die Bildmetadaten automatisch.
+
+Unter `/barrierefreiheit` stehen Informationen zum Arbeitsstand und ein Rückmeldeweg bereit. Prüfungen und noch offene Freigabevoraussetzungen sind im [Barrierefreiheits-Prüfbericht](docs/barrierefreiheit-pruefbericht.md) dokumentiert; eine vollständige BITV-Konformität ist damit nicht zugesichert.
 
 ## Lokal entwickeln
 
@@ -28,6 +32,10 @@ SQLite bleibt der lokale Standard (`backend/database.sqlite`). Die Entwicklungsz
 Demo-Freizeiten werden bei der Einrichtung angelegt. Lokale SQLite-Dateien, Testnutzer und vorhandene Entwicklungslogs müssen nicht aus dem Repository oder der Git-Historie entfernt werden. Produktionsimages nehmen diese Dateien nicht mit.
 
 Die Anmeldung verwendet jetzt HttpOnly-Cookies. Nach dem Update einmal neu anmelden. Für HTML-Bereinigung ist `composer install` auch bei der lokalen Entwicklung erforderlich.
+
+## Platzanfragen
+
+Anbieter können die Platzverwaltung pro Freizeit aktivieren, freie Plätze intern pflegen und laufende Anfragen oder einen Bewerbungszeitraum mit externer Verlosung anbieten. Öffentlich werden nur Statusstufen, keine Kapazitätszahlen oder internen Anfrageadressen ausgegeben. Anfrageinhalte werden direkt per E-Mail versendet und nicht in der Portal-Datenbank gespeichert; Buchung, Zusage, Verlosung und Bezahlung bleiben beim Anbieter.
 
 Ohne eigene Konfiguration gelten `APP_ENV=development`, SQLite und `APP_BASE_URL=http://localhost:5173`. Zum Ändern der Adresse muss `APP_BASE_URL` zur tatsächlich verwendeten Frontend-Adresse passen (auch Port und localhost/127.0.0.1 beachten). Echte Konfigurationswerte gehören in Umgebungsvariablen oder die ignorierte Datei `backend/config.local.php`; Umgebungsvariablen haben Vorrang. `config.example.php` ist eine **Produktionsvorlage**, keine notwendige lokale Konfiguration.
 
@@ -73,9 +81,9 @@ Frontend und PHP/PDO-Backend bleiben bestehen; ein Framework- oder Architekturwe
 5. `backend/config.example.php` als Vorlage verwenden: `APP_ENV=production`, `APP_BASE_URL=https://…`, zufälliger `APP_KEY` mit mindestens 32 Zeichen, gültiger `MAIL_FROM`, MySQL-/PostgreSQL-Zugang und ein beschreibbares `APP_LOG_DIR` **außerhalb** des Webroots. SQLite wird im Produktionsmodus abgelehnt. Einen Schlüssel erzeugt `php -r "echo bin2hex(random_bytes(32));"`.
 6. Für eine leere Produktionsdatenbank einmal `BOOTSTRAP_ADMIN_EMAIL` und `BOOTSTRAP_ADMIN_PASSWORD` setzen (mindestens 16, höchstens 72 Bytes), Anwendung initialisieren, Anmeldung prüfen und beide Werte wieder entfernen. In Produktion werden auch bei `SEED_DEMO_DATA=1` **keine Demo-Konten** angelegt. Dafür eine frische SQL-Datenbank nutzen; vorhandene lokale Testkonten werden bewusst nicht automatisch gelöscht.
 7. Nur das Upload-Verzeichnis beschreibbar machen; PHP-Code und Konfiguration nicht durch den Webprozess beschreiben lassen. Upload-Grenzen aus `backend/php.ini` auch im Webserver/PHP-FPM übernehmen. Das Dockerfile übernimmt sie bereits.
-8. PHP-`mail()` mit einem echten Mailtransport konfigurieren und Einladung, Passwort-Reset sowie Kontaktformular bis zum tatsächlichen Empfang testen. Das mitgelieferte Dockerimage enthält noch keinen Mailtransport. Es gibt keinen Fallback mehr, der Einladungs-/Resetlinks in Logdateien schreibt.
+8. PHP-`mail()` mit einem echten Mailtransport konfigurieren und Einladung, Passwort-Reset, Kontaktformular sowie Anbieter- und Bestätigungsmails für Platzanfragen bis zum tatsächlichen Empfang testen. Das mitgelieferte Dockerimage enthält noch keinen Mailtransport. Es gibt keinen Fallback, der Nachrichteninhalte oder Resetlinks in Logdateien schreibt.
 9. Bei einem Reverse Proxy `TRUSTED_PROXIES` ausschließlich auf dessen konkrete IP-Adressen setzen und weitergeleitete Client-IP-Header am äußeren Proxy kontrollieren. Ohne diese Konfiguration werden Forwarded-Header ignoriert; dadurch teilen sich Nutzer hinter einem Proxy dessen Rate-Limit.
-10. Vor Freigabe Backups/Wiederherstellung, Rechte, HTTPS, Versand, Logrotation und regelmäßige Löschung abgelaufener Sessions/Passworttokens/Rate-Limit-Einträge sowie eine Aufbewahrungsfrist für Kontakt-Metadaten festlegen.
+10. Vor Freigabe Backups/Wiederherstellung, Rechte, HTTPS, Versand, Logrotation und regelmäßige Löschung abgelaufener Sessions/Passworttokens/Rate-Limit-Einträge festlegen. Platzanfrage-Ereignisse werden höchstens 90 Tage gehalten; über `PLACE_REQUEST_EVENT_RETENTION_DAYS` kann eine kürzere Frist konfiguriert werden.
 
 Die Einrichtung ergänzt Tabellen automatisch über `app_migrations`. Beim ersten Start nach diesem Sicherheitsupdate werden bisherige Sessions widerrufen und gespeicherte Beschreibungen bereinigt. Vor Aktualisierung einer wichtigen Datenbank deshalb ein Backup anlegen und den ersten Start ohne parallelen öffentlichen Verkehr durchführen.
 

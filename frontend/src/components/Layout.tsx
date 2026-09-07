@@ -1,172 +1,85 @@
-import React, { useEffect, useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Outlet, Link, NavLink, useLocation } from 'react-router-dom';
-import { motion } from 'framer-motion';
 import { LogOut, Menu, Shield, UserRoundCog, X } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
-import headerCircles from '../assets/header_circles.svg';
 import logoJugendring from '../assets/logo_jugendring_westsachsen.svg';
 
-export const Layout: React.FC = () => {
+export function Layout() {
   const { user, logout } = useAuthStore();
-  const location = useLocation();
+  const { pathname } = useLocation();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [logoutError, setLogoutError] = useState('');
   const [loggingOut, setLoggingOut] = useState(false);
+  const main = useRef<HTMLElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
   const isAdmin = user?.role === 'admin' || user?.role === 'master_admin';
-  const menuRef = useRef<HTMLDivElement>(null);
-  const menuToggleRef = useRef<HTMLButtonElement>(null);
-  const firstMenuItemRef = useRef<HTMLAnchorElement>(null);
-  const mainNavRef = useRef<HTMLElement>(null);
-  const accountLabel = user?.club_name || user?.display_name || user?.email || '';
 
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setIsMenuOpen(false);
+    const content = main.current;
+    if (!content) return;
+    content.focus({ preventScroll: true });
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    const updateTitle = () => {
+      const heading = content.querySelector('h1');
+      document.title = heading ? heading.textContent + ' · Ferienfreizeiten Westsachsen' : 'Ferienfreizeiten Westsachsen';
+    };
+    updateTitle();
+    const observer = new MutationObserver(updateTitle);
+    observer.observe(content, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
+  }, [pathname]);
+
+  useEffect(() => {
+    const dismiss = (event: MouseEvent) => {
+      if (isMenuOpen && !menu.current?.contains(event.target as Node)) setIsMenuOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && isMenuOpen) { setIsMenuOpen(false); toggle.current?.focus(); }
+      const container = (event.target as HTMLElement).closest?.('.multi-select-container');
+      if (event.key === 'Escape' && container) {
+        const trigger = container.querySelector<HTMLButtonElement>('button[aria-expanded="true"]');
+        trigger?.click(); trigger?.focus();
       }
     };
-
-    const handleMenuKeyDown = (event: KeyboardEvent) => {
-      if (!isMenuOpen) return;
-
-      if (event.key === 'Escape') {
-        setIsMenuOpen(false);
-        requestAnimationFrame(() => menuToggleRef.current?.focus());
-        return;
-      }
-
-      if (event.key !== 'Tab' || !mainNavRef.current) return;
-
-      const focusableElements = Array.from(mainNavRef.current.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ));
-      const firstElement = focusableElements[0];
-      const lastElement = focusableElements.at(-1);
-
-      if (!firstElement || !lastElement) {
-        event.preventDefault();
-      } else if (event.shiftKey && document.activeElement === firstElement) {
-        event.preventDefault();
-        lastElement.focus();
-      } else if (!event.shiftKey && document.activeElement === lastElement) {
-        event.preventDefault();
-        firstElement.focus();
-      }
-    };
-
-    document.addEventListener('keydown', handleMenuKeyDown);
-
-    if (isMenuOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      const wasOverflow = document.body.style.overflow;
-      const isMobileMenu = window.matchMedia('(max-width: 680px)').matches;
-      if (isMobileMenu) document.body.style.overflow = 'hidden';
-      requestAnimationFrame(() => firstMenuItemRef.current?.focus());
-
-      return () => {
-        document.removeEventListener('mousedown', handleClickOutside);
-        document.removeEventListener('keydown', handleMenuKeyDown);
-        if (isMobileMenu) document.body.style.overflow = wasOverflow;
-      };
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleMenuKeyDown);
-    };
+    document.addEventListener('mousedown', dismiss);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('mousedown', dismiss); document.removeEventListener('keydown', escape); };
   }, [isMenuOpen]);
 
-  return (
-    <div className="app-container">
-      <a className="skip-link" href="#main-content">Zum Inhalt springen</a>
-      <header className={`site-header ${user ? 'has-user-menu' : 'is-public'}`}>
-        <img className="header-circles" src={headerCircles} alt="" aria-hidden="true" />
-        <div className="header-shell" ref={menuRef}>
-          <Link to="/" className="brand-logo" aria-label="Jugendring Westsachsen Ferienfreizeiten Startseite">
-            <img src={logoJugendring} alt="Jugendring Westsachsen" />
-            <span className="brand-divider" aria-hidden="true" />
-            <span className="brand-copy">
-              <span className="brand-heading">
-                Ferienfreizeiten<br className="brand-heading-break" /> Westsachsen
-              </span>
-              <span className="brand-subheading">Angebote für Kinder und Jugendliche</span>
-            </span>
-          </Link>
-
-          {user ? (
-            <>
-              <button
-                className="menu-toggle"
-                type="button"
-                onClick={() => setIsMenuOpen((current) => !current)}
-                ref={menuToggleRef}
-                aria-label={isMenuOpen ? 'Menü schließen' : 'Menü öffnen'}
-                aria-expanded={isMenuOpen}
-                aria-controls="main-navigation"
-              >
-                {isMenuOpen ? <X size={24} /> : <Menu size={24} />}
-              </button>
-
-              {isMenuOpen && <button className="menu-backdrop" type="button" onClick={() => setIsMenuOpen(false)} aria-label="Menü schließen" />}
-              <nav ref={mainNavRef} id="main-navigation" className={`main-nav ${isMenuOpen ? 'is-open' : ''}`} aria-label="Kontomenü">
-                <div className="menu-account-info">
-                  <span>Eingeloggt als</span>
-                  <strong>{accountLabel}</strong>
-                </div>
-                <ul>
-                  <li>
-                    <NavLink ref={firstMenuItemRef} to={isAdmin ? '/admin' : '/dashboard'} onClick={() => setIsMenuOpen(false)}>
-                      {isAdmin ? <Shield size={17} /> : <UserRoundCog size={17} />}
-                      {isAdmin ? 'Verwaltung' : 'Meine Freizeiten'}
-                    </NavLink>
-                  </li>
-                  <li>
-                    <NavLink to="/einstellungen" onClick={() => setIsMenuOpen(false)}>
-                      <UserRoundCog size={17} />
-                      Konto &amp; Einstellungen
-                    </NavLink>
-                  </li>
-                </ul>
-                <div className="menu-divider" aria-hidden="true" />
-                <button
-                  className="menu-logout"
-                  disabled={loggingOut}
-                  onClick={async () => {
-                    if (loggingOut) return;
-                    if (!window.dispatchEvent(new Event('request-leave-editor', { cancelable: true }))) return;
-                    setLoggingOut(true);
-                    try { await logout(); setIsMenuOpen(false); }
-                    catch (error) { setLogoutError(error instanceof Error ? error.message : 'Abmelden fehlgeschlagen.'); }
-                    finally { setLoggingOut(false); }
-                  }}
-                >
-                  <LogOut size={17} />
-                  Abmelden
-                </button>
-                {logoutError && <p role="alert">{logoutError}</p>}
-              </nav>
-            </>
-          ) : null}
+  return <div className="app-container">
+    <a className="skip-link" href="#main-content">Zum Inhalt springen</a>
+    <header className="site-header">
+      <div className="header-shell" ref={menu}>
+        <Link to="/" className="brand-logo" aria-label="Jugendring Westsachsen Ferienfreizeiten Startseite">
+          <img src={logoJugendring} alt="Jugendring Westsachsen" />
+          <span className="brand-divider" aria-hidden="true" />
+          <span className="brand-copy"><span className="brand-heading">Ferienfreizeiten<br className="brand-heading-break" /> Westsachsen</span><span className="brand-subheading">Gemeinsam eine gute Zeit erleben.</span></span>
+        </Link>
+        <div className="header-actions">
+          <NavLink className="text-button" to="/">Freizeiten entdecken</NavLink>
+          {!user ? <Link className="secondary-action" to="/login">Vereins-Login</Link> : <button ref={toggle} type="button" className="menu-toggle" aria-label={isMenuOpen ? 'Menü schließen' : 'Menü öffnen'} aria-expanded={isMenuOpen} aria-controls="main-navigation" onClick={() => setIsMenuOpen(!isMenuOpen)}>{isMenuOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}</button>}
         </div>
-      </header>
-
-      <main className="page-shell" id="main-content">
-          <motion.div
-            key={location.pathname}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.22 }}
-          >
-            <Outlet />
-          </motion.div>
-      </main>
-
-      <footer className="site-footer">
-        <span>&copy; {new Date().getFullYear()} Westsachsen Ferienfreizeiten</span>
-        <Link to="/kontakt">Kontakt</Link>
-        <Link to="/impressum">Impressum</Link>
-        {!user && <Link to="/login">Vereins-Login</Link>}
-      </footer>
-    </div>
-  );
-};
+        {user && <nav id="main-navigation" className={`main-nav ${isMenuOpen ? 'is-open' : ''}`} aria-label="Kontomenü" onBlur={event => { if (event.relatedTarget && !menu.current?.contains(event.relatedTarget as Node)) setIsMenuOpen(false); }}>
+          <div className="menu-account-info"><span>Eingeloggt als</span><strong>{user.club_name || user.display_name || user.email}</strong></div>
+          <ul><li><NavLink to={isAdmin ? '/admin' : '/dashboard'} onClick={() => setIsMenuOpen(false)}>{isAdmin ? <Shield size={18} aria-hidden="true" /> : <UserRoundCog size={18} aria-hidden="true" />}{isAdmin ? 'Verwaltung' : 'Meine Freizeiten'}</NavLink></li>
+            <li><NavLink to="/einstellungen" onClick={() => setIsMenuOpen(false)}><UserRoundCog size={18} aria-hidden="true" />Konto &amp; Einstellungen</NavLink></li></ul>
+          <div className="menu-divider" />
+          <button type="button" className="menu-logout" disabled={loggingOut} onClick={async () => {
+            if (loggingOut || !window.dispatchEvent(new Event('request-leave-editor', { cancelable: true }))) return;
+            setLoggingOut(true);
+            try { await logout(); setIsMenuOpen(false); }
+            catch (error) { setLogoutError(error instanceof Error ? error.message : 'Abmelden fehlgeschlagen.'); }
+            finally { setLoggingOut(false); }
+          }}><LogOut size={18} aria-hidden="true" />Abmelden</button>
+          {logoutError && <p role="alert">{logoutError}</p>}
+        </nav>}
+      </div>
+    </header>
+    <main className="page-shell" id="main-content" ref={main} tabIndex={-1}><Outlet /></main>
+    <footer className="site-footer" aria-label="Informationen und Kontakt">
+      <span>&copy; {new Date().getFullYear()} Ferienfreizeiten Westsachsen</span>
+      <Link to="/kontakt">Kontakt</Link><Link to="/impressum">Impressum</Link><Link to="/datenschutz">Datenschutz</Link><Link to="/barrierefreiheit">Barrierefreiheit</Link>
+    </footer>
+  </div>;
+}
