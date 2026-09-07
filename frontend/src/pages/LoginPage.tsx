@@ -1,21 +1,28 @@
+import { AccessibleForm } from '../components/AccessibleForm';
+import { apiFetch } from '../utils/api';
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { KeyRound, LogIn, UserRound } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 
-export const LoginPage: React.FC = () => {
+export const LoginPage: React.FC<{ onAuthenticated?: () => void; expectedUserId?: number }> = ({ onAuthenticated, expectedUserId }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const login = useAuthStore((state) => state.login);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const passwordChanged = searchParams.get('passwort-geaendert') === '1';
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (busy) return;
+    setBusy(true);
     setError('');
 
     try {
-      const res = await fetch('/api/login', {
+      const res = await apiFetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: email, password }),
@@ -26,12 +33,13 @@ export const LoginPage: React.FC = () => {
       if (!res.ok) {
         setError(data.error || 'Login fehlgeschlagen');
       } else {
-        login(data.user, data.token);
-        navigate(data.user.role === 'user' ? '/dashboard' : '/admin');
+        if (expectedUserId && data.user.id !== expectedUserId) throw new Error('Bitte mit demselben Konto anmelden, um diese Eingaben weiterzubearbeiten.');
+        login(data.user, data.csrf_token);
+        if (onAuthenticated) onAuthenticated();
+        else navigate(data.user.role === 'user' ? '/dashboard' : '/admin');
       }
-    } catch {
-      setError('Netzwerkfehler');
-    }
+    } catch (error) { setError(error instanceof Error ? error.message : 'Anmeldung fehlgeschlagen.'); }
+    finally { setBusy(false); }
   };
 
   return (
@@ -39,13 +47,13 @@ export const LoginPage: React.FC = () => {
       <section className="auth-card">
         <div className="auth-visual" aria-hidden="true">
           <span className="auth-badge">Vereinsbereich</span>
-          <h1>Angebote pflegen, veröffentlichen und aktuell halten.</h1>
+          <p>Angebote pflegen, veröffentlichen und aktuell halten.</p>
         </div>
 
-        <form className="auth-form" onSubmit={handleSubmit}>
+        <AccessibleForm className="auth-form" onSubmit={handleSubmit}>
           <div>
             <span className="eyebrow">Login</span>
-            <h2>Für Jugendvereine</h2>
+            <h1>Für Jugendvereine</h1>
             <p>Nach der Anmeldung kannst du Freizeiten verwalten und neue Angebote einstellen.</p>
           </div>
 
@@ -54,6 +62,7 @@ export const LoginPage: React.FC = () => {
               {error}
             </p>
           )}
+          {passwordChanged && <p className="success-alert" role="status">Passwort geändert. Bitte melde dich mit dem neuen Passwort an.</p>}
 
           <label className="field">
             <span>E-Mail oder Nutzername</span>
@@ -83,14 +92,14 @@ export const LoginPage: React.FC = () => {
             </div>
           </label>
 
-          <button className="primary-action" type="submit">
+          <button className="primary-action" type="submit" disabled={busy}>
             <LogIn size={18} />
-            Anmelden
+            {busy ? 'Anmeldung läuft …' : 'Anmelden'}
           </button>
           <Link className="secondary-action auth-link" to="/passwort-vergessen">
             Passwort vergessen
           </Link>
-        </form>
+        </AccessibleForm>
       </section>
     </div>
   );

@@ -1,3 +1,6 @@
+import { AccessibleForm } from '../components/AccessibleForm';
+import { useAction } from '../utils/useAction';
+import { apiFetch } from '../utils/api';
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Mail } from 'lucide-react';
@@ -6,14 +9,15 @@ export const ForgotPasswordPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const { busy, runAction } = useAction(setError);
 
-  const handleSubmit = async (event: React.FormEvent) => {
+  const handleSubmit = (event: React.FormEvent) => runAction(async () => {
     event.preventDefault();
     setError('');
     setMessage('');
 
     try {
-      const response = await fetch('/api/password/request-reset', {
+      const response = await apiFetch('/api/password/request-reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
@@ -24,18 +28,18 @@ export const ForgotPasswordPage: React.FC = () => {
         return;
       }
       setMessage(data.message || 'Wenn ein Konto existiert, wurde eine E-Mail versendet.');
-    } catch {
-      setError('Netzwerkfehler');
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Anfrage fehlgeschlagen.');
     }
-  };
+  });
 
   return (
     <div className="auth-page">
       <section className="auth-card single">
-        <form className="auth-form" onSubmit={handleSubmit}>
+        <AccessibleForm className="auth-form" onSubmit={handleSubmit}>
           <div>
             <span className="eyebrow">Passwort</span>
-            <h2>Passwort zurücksetzen</h2>
+            <h1>Passwort zurücksetzen</h1>
             <p>Du erhältst einen Link, über den du ein neues Passwort festlegen kannst.</p>
           </div>
           {error && <p className="alert" role="alert">{error}</p>}
@@ -47,9 +51,9 @@ export const ForgotPasswordPage: React.FC = () => {
               <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" />
             </div>
           </label>
-          <button className="primary-action" type="submit">Link anfordern</button>
+          <button className="primary-action" type="submit" disabled={busy}>Link anfordern</button>
           <Link className="secondary-action auth-link" to="/login">Zur Anmeldung</Link>
-        </form>
+        </AccessibleForm>
       </section>
     </div>
   );

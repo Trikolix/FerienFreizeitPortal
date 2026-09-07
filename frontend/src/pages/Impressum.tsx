@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 
 export const Impressum: React.FC = () => {
   return (
@@ -17,6 +18,9 @@ export const Impressum: React.FC = () => {
       <p>
         Telefon: +49 (0) 123 44 55 66<br />
         E-Mail: kontakt@westsachsen-camps.de
+      </p>
+      <p>
+        Für allgemeine Fragen zur Plattform steht auch das <Link className="text-link" to="/kontakt">Kontaktformular</Link> zur Verfügung.
       </p>
 
       <h2>Verantwortlich für den Inhalt nach § 55 Abs. 2 RStV</h2>

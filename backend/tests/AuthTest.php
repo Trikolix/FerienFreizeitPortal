@@ -2,9 +2,10 @@
 use PHPUnit\Framework\TestCase;
 
 class AuthTest extends TestCase {
-    private $dbFile = __DIR__ . '/../test_database.sqlite';
+    private string $dbFile;
 
     protected function setUp(): void {
+        $this->dbFile = tempnam(sys_get_temp_dir(), 'ffp-auth-');
         // Create test db
         $db = new PDO('sqlite:' . $this->dbFile);
         $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);

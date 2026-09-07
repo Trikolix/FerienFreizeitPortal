@@ -1,25 +1,43 @@
+import { safeHtml } from '../utils/safeHtml';
+import { apiFetch } from '../utils/api';
 import React, { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useLocation } from 'react-router-dom';
 import { ArrowLeft, CalendarClock, CalendarDays, Euro, MapPin, Tag, UsersRound } from 'lucide-react';
+import { ImageGallery } from '../components/ImageGallery';
+import { PlaceRequestModal } from '../components/PlaceRequestModal';
+import { availabilityLabel, availabilityTone, placeRequestActionLabel, type AvailabilityState } from '../utils/placeRequests';
 
-interface CampDetail {
+interface Holiday {
+  id: number;
+  name: string;
+  starts_at: string;
+  ends_at: string;
+}
+
+interface Camp {
   id: number;
   title: string;
   club_name: string;
-  contact_info?: string;
-  username?: string;
   min_age: number;
   max_age: number;
   description: string;
   type: string;
-  location_text?: string;
-  location_lat?: number;
-  location_lng?: number;
-  starts_at?: string;
-  ends_at?: string;
-  price_eur?: number | string;
-  registration_deadline?: string;
+  categories?: string[];
+  location_text: string;
+  location_lat: number;
+  location_lng: number;
+  starts_at: string;
+  ends_at: string;
+  price_eur: number;
+  registration_deadline: string;
+  status: 'draft' | 'published' | 'fully_booked' | 'archived';
   images?: string[];
+  image_metadata?: import('../utils/imageMetadata').ImageMetadata[];
+  contact_info?: string;
+  username?: string;
+  allocation_method?: 'request' | 'lottery';
+  request_opens_at?: string | null;
+  availability_state?: AvailabilityState;
 }
 
 const formatDateTime = (value?: string) => {
@@ -44,95 +62,85 @@ const formatPrice = (value?: number | string) => {
   }).format(amount);
 };
 
+const getHolidayForCamp = (camp: Camp, holidays: Holiday[]) => holidays.find((holiday) => {
+  if (!camp.starts_at || !camp.ends_at) return false;
+  const campStart = camp.starts_at.split(' ')[0];
+  const campEnd = camp.ends_at.split(' ')[0];
+  const holidayStart = holiday.starts_at.split(' ')[0];
+  const holidayEnd = holiday.ends_at.split(' ')[0];
+  return campStart >= holidayStart && campEnd <= holidayEnd;
+});
+
 export const CampDetailPage: React.FC = () => {
-  const { id } = useParams();
-  const [camp, setCamp] = useState<CampDetail | null>(null);
+  const { id } = useParams<{ id: string }>();
+  const location = useLocation();
+  const returnSearch = typeof location.state?.search === 'string' ? location.state.search : '';
+  const [camp, setCamp] = useState<Camp | null>(null);
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isPlaceRequestOpen, setIsPlaceRequestOpen] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const fetchCamp = async () => {
-      setIsLoading(true);
+    const controller = new AbortController();
+    const loadData = async () => {
+      setLoading(true);
       setError('');
-
       try {
-        const response = await fetch(`/api/camps/${id}`);
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error || 'Freizeit konnte nicht geladen werden');
-        }
-
-        if (!cancelled) {
-          setCamp(data);
-        }
+        const [campRes, holidaysRes] = await Promise.all([
+          apiFetch(`/api/camps/${id}`, { signal: controller.signal }),
+          apiFetch('/api/holidays', { signal: controller.signal }).catch(() => new Response('[]'))
+        ]);
+        
+        if (!campRes.ok) throw new Error('Freizeit nicht gefunden');
+        const campData = await campRes.json();
+        const holidaysData = await holidaysRes.json();
+        
+        setCamp(campData);
+        setHolidays(holidaysData);
       } catch (err) {
-        if (!cancelled) {
-          setCamp(null);
-          setError(err instanceof Error ? err.message : 'Freizeit konnte nicht geladen werden');
-        }
+        if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Fehler beim Laden');
       } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
-
-    void fetchCamp();
-
-    return () => {
-      cancelled = true;
-    };
+    void loadData();
+    return () => controller.abort();
   }, [id]);
 
-  if (isLoading) {
-    return (
-      <div className="empty-state" role="status">
-        <p>Freizeit wird geladen...</p>
-      </div>
-    );
-  }
+  if (loading) return <div className="empty-state"><p role="status">Freizeit wird geladen …</p></div>;
+  if (error || !camp) return <div className="empty-state"><h1>Freizeit nicht verfügbar</h1><p role="alert">{error || 'Freizeit nicht gefunden'}</p><Link to="/">Zurück zur Suche</Link></div>;
 
-  if (error || !camp) {
-    return (
-      <div className="empty-state">
-        <h1>Freizeit nicht gefunden</h1>
-        <p>{error || 'Diese Freizeit ist nicht verfügbar.'}</p>
-        <Link className="secondary-action" to="/">
-          <ArrowLeft size={17} />
-          Zur Suche
-        </Link>
-      </div>
-    );
-  }
-
-  const hasLocation = camp.location_lat !== undefined && camp.location_lng !== undefined;
+  const holiday = getHolidayForCamp(camp, holidays);
+  const placeStatus = availabilityLabel(camp);
+  const placeAction = placeRequestActionLabel(camp.availability_state);
 
   return (
     <article className="camp-detail-page">
-      <Link className="secondary-action detail-back-link" to="/">
+      <Link className="secondary-action detail-back-link" to={returnSearch ? `/?${returnSearch}` : '/'}>
         <ArrowLeft size={17} />
         Zur Suche
       </Link>
 
       <section className="detail-hero">
-        {camp.images?.length ? (
-          <img src={camp.images[0]} alt={`Bild zu ${camp.title}`} />
-        ) : (
-          <div className="camp-media-fallback">
-            <MapPin size={42} />
-          </div>
-        )}
+        <ImageGallery metadata={camp.image_metadata} images={camp.images} title={camp.title} />
       </section>
 
       <section className="detail-layout">
         <div className="detail-main">
-          <span className="eyebrow">{camp.type}</span>
+          <div className="detail-tags">
+            {camp.categories?.map(cat => (
+              <span key={cat} className="camp-type">{cat}</span>
+            )) || <span className="camp-type">{camp.type}</span>}
+            {holiday && (
+              <span className="status-pill is-live">
+                <CalendarDays size={14} /> {holiday.name}
+              </span>
+            )}
+          </div>
           <h1>{camp.title}</h1>
           <p className="provider">{camp.club_name}</p>
-          <p className="detail-description">{camp.description || 'Keine Beschreibung hinterlegt.'}</p>
+          <div className="detail-description" dangerouslySetInnerHTML={{ __html: safeHtml(camp.description) }} />
         </div>
 
         <aside className="detail-sidebar" aria-label="Freizeitdetails">
@@ -174,26 +182,28 @@ export const CampDetailPage: React.FC = () => {
           <div className="detail-fact">
             <Tag size={20} />
             <div>
-              <span>Kategorie</span>
-              <strong>{camp.type || 'Nicht angegeben'}</strong>
+              <span>Kategorien</span>
+              <strong>{camp.categories?.join(', ') || camp.type || 'Nicht angegeben'}</strong>
             </div>
           </div>
           <div className="detail-fact">
             <MapPin size={20} />
             <div>
               <span>Ort</span>
-              <strong>
-                {camp.location_text || (hasLocation ? `${camp.location_lat}, ${camp.location_lng}` : 'Nicht angegeben')}
-              </strong>
+              <strong>{camp.location_text || 'Nicht angegeben'}</strong>
             </div>
           </div>
           <div className="detail-contact">
             <span>Anbieter</span>
             <strong>{camp.club_name}</strong>
-            <p>{camp.contact_info || camp.username || 'Keine Kontaktinformation hinterlegt.'}</p>
+            <p>{camp.contact_info || 'Keine Kontaktinformation hinterlegt.'}</p>
+            {placeStatus && <span className={`status-pill ${availabilityTone(camp.availability_state)}`} role="status">{placeStatus}</span>}
+            <p>Eine Anfrage ist unverbindlich. Buchung, Bestätigung und Bezahlung erfolgen direkt beim Anbieter.</p>
+            {placeAction && <button className="primary-action detail-request-action" type="button" onClick={() => setIsPlaceRequestOpen(true)}>{placeAction}</button>}
           </div>
         </aside>
       </section>
+      {isPlaceRequestOpen && <PlaceRequestModal camp={camp} onClose={() => setIsPlaceRequestOpen(false)} />}
     </article>
   );
 };

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Regionales Webportal für Ferienfreizeiten",
   "scripts": {
-    "dev:backend": "cd backend && php -S localhost:8000 index.php",
+    "dev:backend": "cd backend && php -d upload_max_filesize=5M -d post_max_size=26M -d max_file_uploads=10 -d memory_limit=256M -d display_errors=0 -d expose_php=0 -S localhost:8000 index.php",
     "dev:frontend": "cd frontend && npm run dev",
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "build": "cd frontend && npm run build"
