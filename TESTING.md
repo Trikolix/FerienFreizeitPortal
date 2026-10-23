@@ -84,6 +84,15 @@ API ausschließlich an `127.0.0.1:18083` binden, `FFP_SQL_SMOKE=1` setzen und `n
 
 ## Verifizierter Stand
 
+### Abhängigkeits- und Sicherheitsupdate (23. Oktober 2026)
+
+- PHP 8.3.36 mit aktualisierter Composer-Lockdatei: **49 Tests, 311 Assertions erfolgreich**; Composer-Audit ohne Sicherheitsmeldungen.
+- Node.js 24.22.1: ESLint, TypeScript-6.0.3-Prüfung und Vite-8.3.5-Produktionsbuild erfolgreich.
+- **15 Chromium-Browserabläufe erfolgreich**, einschließlich Barrierefreiheit/Responsive, Anmeldung, Veröffentlichung, Uploads und eines zusätzlichen Clipboard-Regressionsfalls im Veröffentlichungsablauf: Formel-/Video-/Bild-Payloads werden nicht als Einbettungen übernommen, normale Fettschrift bleibt erhalten, kein Testskript wird ausgeführt.
+- Saubere Docker-Builds für PHP-Backend und Nginx-Frontend mit dem gepatchten Node.js-24.22.1-Buildimage erfolgreich. Datenbanken/Uploads der Tests liegen ausschließlich in temporären Verzeichnissen eines separaten Containers.
+- npm-Audit im Root: keine Meldungen. Frontend: keine mittleren, hohen oder kritischen Meldungen; zwei **Low**-Einträge für den noch ungepatchten Quill-HTML-Export und den React-Wrapper bleiben sichtbar. Mitigation und Kompatibilitätsausnahmen sind in [SECURITY_AND_UX.md](SECURITY_AND_UX.md) dokumentiert.
+- Die bisherigen MySQL-/PostgreSQL-/Produktions-Smoke-Tests aus den folgenden Abschnitten wurden bei diesem Paketupdate nicht erneut ausgeführt.
+
 - PHP 8.3: Platzverwaltungsstand mit 45 Tests/281 Assertions; aktueller Redesign-Abschluss siehe unten.
 - SQLite: Migration und erweiterter SQL-/API-Smoke-Test erfolgreich.
 - MySQL 8.0 und PostgreSQL 16: Erweiterte Migrations-, SQL-, API- und Apache-Smoke-Tests erfolgreich.

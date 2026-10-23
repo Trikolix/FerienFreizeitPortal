@@ -2,6 +2,18 @@
 
 Stand: 6. September 2026. Umsetzung im vorhandenen React-/PHP-/PDO-Aufbau, ohne Architekturwechsel. Entwicklungsdaten und Git-Historie bleiben erhalten.
 
+## Sicherheitsupdate vom 23. Oktober 2026
+
+Die [Node.js-Sicherheitsveröffentlichung vom 21. Oktober](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases) behebt unter anderem einen Brotli-Speicherfehler mit möglicher Codeausführung (CVE-2026-111497) sowie DNS-/TLS-Schwachstellen. Node.js stuft die höchste Schwere dieser Veröffentlichung als **High** ein. [24.22.1](https://nodejs.org/en/blog/release/v24.22.1) enthält die Korrekturen für die hier verwendete LTS-Linie.
+
+Die lokale Node.js-Version war bei der Prüfung bereits 24.22.1. Zuvor gab das Repository im Docker-Build nur `node:24-alpine` und lokal Node 24 vor; damit war ein älteres, verwundbares Buildimage möglich. Docker-Build und `.nvmrc` verwenden jetzt ausdrücklich 24.22.1; beide npm-Manifeste verlangen mindestens diesen Patch innerhalb der 24er-Linie. Node.js wird ausschließlich für Entwicklung/Build benötigt: Das ausgelieferte Frontend ist statisch unter Nginx, das Backend läuft unter PHP. Ein laufendes Zielsystem wurde nicht untersucht oder deployt. Vorhandene Images/Installationen werden durch einen Git-Push nicht aktualisiert; Neubau mit `docker compose build --pull` und anschließender Containerwechsel sind nötig.
+
+Alle npm-Abhängigkeiten wurden auf aktuelle stabile, kompatible Versionen aktualisiert, einschließlich transitiver Pakete. Unter anderem: DOMPurify 3.4.17, React/React DOM 19.3.1, Vite 8.3.5, Framer Motion 14.6.0, concurrently 10.0.6 und Playwright 1.64.1. Die zuvor gemeldeten kritischen Befunde bei DOMPurify und shell-quote sowie die hohen Befunde bei Vite, brace-expansion und source-map-js sind im aktualisierten Abhängigkeitsbaum behoben. Ein betroffener Paketstand allein beweist keine Ausnutzbarkeit im konkreten Anwendungspfad.
+
+Kompatibilitätsgrenzen: TypeScript bleibt auf 6.0.3, da `typescript-eslint` 8.72.0 laut Peer-Abhängigkeit TypeScript `<6.1.0` benötigt ([Maintainer-Hinweis](https://github.com/typescript-eslint/typescript-eslint/issues/12518)). `@types/node` bleibt auf der aktuellen 24er-Version 24.19.2 passend zur Laufzeit. Composer aktualisiert alle PHP-8.3-kompatiblen Pakete, darunter HTMLPurifier 4.19.1 und PHPUnit 12.5.40; die Mindestversionen sind angehoben. Höhere Hauptversionen mit höheren PHP-Anforderungen werden nicht erzwungen.
+
+**Verbleibender Editor-Befund:** React Quill 3.8.3 benötigt Quill 2.0.3. Für dessen [CVE-2025-15056](https://github.com/advisories/GHSA-v3m3-f69x-jf25) gibt es weiterhin keinen Herstellerpatch. Das bisherige Festhalten an 2.0.2 ersetzt keinen Patchnachweis; jetzt wird die aktuelle Version mit einer expliziten Formatfreigabe verwendet. Formel-, Video- und andere Einbettungen sind deaktiviert, exportiertes HTML wird sofort mit DOMPurify bereinigt. Die bestehende serverseitige HTMLPurifier-Bereinigung sowie DOMPurify bei der Ausgabe bleiben zusätzliche Schutzschichten. Der Browser-Regressionsfall prüft eingefügte Video-/Formel-/Bild-Payloads und den Erhalt normaler Textformatierung. Das ist eine Anwendungsmitigation, kein Patch der Quill-Bibliothek. `npm audit` meldet deshalb weiterhin **zwei Low-Einträge** für Quill und dessen React-Wrapper. Diese Meldungen werden nicht ausgeblendet; ein Herstellerfix muss nachgezogen werden.
+
 Priorität: P0 = Sicherheits-/Datenverlustrisiko, P1 = zentrale Alltagsabläufe, P2 = Komfort/Wartbarkeit. Komplexität: S = eng begrenzte Änderung, M = mehrere zusammenhängende Stellen. Die Angaben beschreiben den Umfang, keine feste Stundenplanung.
 
 ## Umgesetzt
@@ -24,7 +36,7 @@ Priorität: P0 = Sicherheits-/Datenverlustrisiko, P1 = zentrale Alltagsabläufe,
 | P1 | SQL- und Serverbetrieb prüfen | M | MySQL-Default-/Syntaxprobleme und PostgreSQL-Typen korrigiert; SQL-/Apache-Smoke-Tests und Produktions-Bootstrap-Test ergänzt. |
 | P2 | Tastatur, Dialoge und mobile Bedienung | S–M | Native modale Dialoge mit Fokusbindung, Escape und Fokusrückgabe; fokussierbare Kategorieauswahl, benannte Textbearbeitung, mobile Ansicht geprüft. Keine Behauptung vollständiger WCAG-Konformität. |
 | P2 | Öffentliche Seite schlanker laden | S | Verwaltung, Texteditor und Karte nach Bedarf geladen; lokale Karten-Icons und keine externen Google-Fonts. Haupt-JS-Bundle ca. 385 kB statt ca. 815 kB vor der Aufteilung (unkomprimiert). |
-| P2 | Regressionen und Abhängigkeiten prüfen | M | PHP-/HTTP-Tests, Playwright-Abläufe, Build/Lint, npm-/Composer-Audit und Dockerbuilds. Quill-Version bewusst festgehalten; vor Änderungen Advisory und Sanitizer-Tests erneut prüfen. |
+| P2 | Regressionen und Abhängigkeiten prüfen | M | PHP-/HTTP-Tests, Playwright-Abläufe, Build/Lint, npm-/Composer-Audit und Dockerbuilds. Aktuelle Quill-Version mit Formatfreigabe und HTML-Bereinigung; verbleibendes Advisory siehe Sicherheitsupdate oben. |
 
 ## Bewusst erst beim Deployment
 

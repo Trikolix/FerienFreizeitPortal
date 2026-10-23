@@ -1,6 +1,9 @@
 {
   "name": "westsachsen-camps",
   "version": "1.0.0",
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "description": "Regionales Webportal für Ferienfreizeiten",
   "scripts": {
     "dev:backend": "cd backend && php -d upload_max_filesize=5M -d post_max_size=26M -d max_file_uploads=10 -d memory_limit=256M -d display_errors=0 -d expose_php=0 -S localhost:8000 index.php",
@@ -9,6 +12,6 @@
     "build": "cd frontend && npm run build"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^10.0.6"
   }
 }

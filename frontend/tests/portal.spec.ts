@@ -52,6 +52,16 @@ test('full publishing flow, preview modal and search', async ({ page }) => {
   await page.getByLabel('Mindestalter').fill('8');
   await page.getByLabel('Höchstalter').fill('16');
   await page.getByRole('textbox', { name: 'Beschreibung' }).fill('Ein Angebot zum Testen der Veröffentlichung.');
+  const editor = page.getByRole('textbox', { name: 'Beschreibung' });
+  // Exercise Quill's unpatched formula/video export issue through the clipboard.
+  await editor.evaluate(element => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData('text/html', '<p><strong>Sicher formatiert</strong></p><iframe class="ql-video" src="https://example.test/embed"></iframe><span class="ql-formula" data-value="&lt;img src=x onerror=alert(1)&gt;">Formel</span><img src=x onerror="window.editorXss=true">');
+    element.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+  });
+  await expect(editor.locator('strong')).toContainText('Sicher formatiert');
+  await expect(editor.locator('iframe, .ql-formula, img, script, [onerror]')).toHaveCount(0);
+  expect(await page.evaluate(() => Reflect.get(window, 'editorXss'))).toBeUndefined();
   await page.getByRole('button', { name: 'Weiter', exact: true }).click();
   await page.getByLabel(/^Beginn(?:\s+\(erforderlich\))?$/).fill('2030-08-01T10:00');
   await page.getByLabel(/^Ende(?:\s+\(erforderlich\))?$/).fill('2030-08-08T12:00');

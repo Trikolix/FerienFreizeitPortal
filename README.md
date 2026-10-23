@@ -8,7 +8,7 @@ Unter `/barrierefreiheit` stehen Informationen zum Arbeitsstand und ein Rückmel
 
 ## Lokal entwickeln
 
-Voraussetzungen: Node.js 24, Composer, PHP 8.3+ mit PDO/SQLite, DOM, Fileinfo, Mbstring und GD (JPEG/PNG/WebP).
+Voraussetzungen: Node.js 24 ab **24.22.1** (Sicherheitspatch vom 21. Oktober 2026; `.nvmrc`), Composer, PHP 8.3+ mit PDO/SQLite, DOM, Fileinfo, Mbstring und GD (JPEG/PNG/WebP).
 
 ```sh
 npm ci
@@ -46,6 +46,15 @@ docker compose up -d --build
 ```
 
 Frontend: http://localhost:8080 · Backend: http://localhost:8000
+
+Nach Sicherheitsupdates die Basisimages ausdrücklich neu laden und die Container neu bauen:
+
+```sh
+docker compose build --pull
+docker compose up -d
+```
+
+Node.js wird nur für Entwicklung und Frontend-Build verwendet; das fertige Frontend läuft unter Nginx, das Backend unter PHP. Der Docker-Build verwendet Node.js 24.22.1. Hinweise zu Paketupdates und verbleibenden Editor-Advisories stehen in [SECURITY_AND_UX.md](SECURITY_AND_UX.md).
 
 Der Stack verwendet MySQL, Entwicklungszugänge und Demo-Daten. Die Ports sind ausschließlich an den lokalen Rechner gebunden. Er ist keine fertige Produktionskonfiguration.
 

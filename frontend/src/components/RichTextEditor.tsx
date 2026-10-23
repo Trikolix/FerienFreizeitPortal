@@ -3,9 +3,13 @@ import ReactQuill from 'react-quill-new';
 import type Quill from 'quill';
 import type { Range } from 'quill';
 import { Modal } from './Modal';
+import { safeHtml } from '../utils/safeHtml';
 import 'react-quill-new/dist/quill.snow.css';
 
 const modules = { toolbar: false };
+// Embeds are not supported. In particular, keep formula/video away from Quill's
+// unpatched semantic HTML exporter (CVE-2025-15056).
+const allowedFormats = ['header', 'bold', 'italic', 'underline', 'strike', 'list', 'link'];
 export function RichTextEditor({ value, onChange, errorId }: { value: string; onChange: (value: string) => void; errorId?: string }) {
   const ref = useRef<{ getEditor: () => Quill }>(null);
   const id = useId();
@@ -46,7 +50,7 @@ export function RichTextEditor({ value, onChange, errorId }: { value: string; on
       <button type="button" onMouseDown={event => event.preventDefault()} onClick={openLink}>Link bearbeiten</button>
       <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => { const editor = ref.current?.getEditor(); const range = editor?.getSelection(true); if (range) editor?.removeFormat(range.index, range.length); updateFormats(); }}>Formatierung entfernen</button>
     </div>
-    <ReactQuill ref={ref} theme="snow" modules={modules} value={value} onChange={(html: string) => { onChange(html); updateFormats(); }} onChangeSelection={(range: Range | null) => { if (range) { selection.current = range; updateFormats(); } }} />
+    <ReactQuill ref={ref} theme="snow" modules={modules} formats={allowedFormats} value={value} onChange={(html: string) => { onChange(safeHtml(html)); updateFormats(); }} onChangeSelection={(range: Range | null) => { if (range) { selection.current = range; updateFormats(); } }} />
     <p id={id + '-help'} className="editor-help">Beschreibe die Freizeit in kurzen Absätzen. Markiere Text, um ihn zu formatieren oder einen Link einzufügen.</p>
     {linkOpen && <Modal title="Link bearbeiten" onClose={() => setLinkOpen(false)}>
       <h2>Link bearbeiten</h2>
