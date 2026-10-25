@@ -1,3 +1,4 @@
+import { resetPortalTestLimits } from './portalSupport';
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
@@ -17,6 +18,7 @@ async function login(page: Page, username: string) {
   await expect(page).toHaveURL(username === 'admin' ? /\/admin$/ : /\/dashboard$/);
 }
 test.beforeEach(async ({ page }) => {
+  resetPortalTestLimits();
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.route('https://*.tile.openstreetmap.org/**', route => route.abort());
 });

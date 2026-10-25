@@ -5,7 +5,7 @@ export const fieldSection: Record<string, EditorSection> = {
   title: 'basics', categories: 'basics', min_age: 'basics', max_age: 'basics', description: 'basics',
   starts_at: 'schedule', ends_at: 'schedule', price_eur: 'schedule', registration_deadline: 'schedule',
   place_requests_enabled: 'places', allocation_method: 'places', capacity_total: 'places', places_remaining: 'places',
-  request_opens_at: 'places', waitlist_enabled: 'places', place_request_email: 'places',
+  request_opens_at: 'places', waitlist_enabled: 'places', place_request_email: 'places', confirmation_information: 'places',
   location_text: 'location', location_lat: 'location', location_lng: 'location', contact_info: 'location',
 };
 type CampInput = { title?: string; categories?: string[]; description?: string; min_age?: number; max_age?: number; starts_at?: string; ends_at?: string; registration_deadline?: string; price_eur?: number; location_text?: string; place_requests_enabled?: boolean; allocation_method?: 'request' | 'lottery'; capacity_total?: number; places_remaining?: number; request_opens_at?: string; place_request_email?: string };

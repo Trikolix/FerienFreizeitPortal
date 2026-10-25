@@ -5,6 +5,7 @@ interface User {
   id: number; email: string; username: string;
   role: 'master_admin' | 'admin' | 'user';
   display_name: string; club_name?: string; contact_info?: string;
+  provider_status?: string; provider_id?: number;
 }
 interface AuthState {
   user: User | null; csrfToken: string | null; initialized: boolean; error: string;

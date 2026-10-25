@@ -77,6 +77,14 @@ function ensurePlaceRequestSchema(PDO $db, string $dbConnection): void {
 }
 
 function placeRequestState(array $camp, ?DateTimeImmutable $now = null): string {
+    $timezone = new DateTimeZone('Europe/Berlin');
+    $now = $now ?? new DateTimeImmutable('now', $timezone);
+    // Dates take precedence over capacity and optional registration deadlines.
+    try {
+        foreach (['starts_at', 'ends_at'] as $key) {
+            if (!empty($camp[$key]) && $now >= new DateTimeImmutable(str_replace('T', ' ', (string)$camp[$key]), $timezone)) return 'closed';
+        }
+    } catch (Exception $e) { return 'closed'; }
     $enabled = placeRequestBool($camp['place_requests_enabled'] ?? false) === true;
     if (!$enabled) return ($camp['status'] ?? '') === 'fully_booked' ? 'sold_out' : 'contact_only';
 
@@ -84,8 +92,6 @@ function placeRequestState(array $camp, ?DateTimeImmutable $now = null): string 
         return 'contact_only';
     }
 
-    $timezone = new DateTimeZone('Europe/Berlin');
-    $now = $now ?? new DateTimeImmutable('now', $timezone);
     try {
         $opensAt = !empty($camp['request_opens_at'])
             ? new DateTimeImmutable(str_replace('T', ' ', (string)$camp['request_opens_at']), $timezone)

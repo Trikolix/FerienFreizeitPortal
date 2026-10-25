@@ -89,7 +89,9 @@ function removeUnreferencedImages(PDO $db, array $urls): void {
         $stmt = $db->prepare('SELECT COUNT(*) FROM camp_images WHERE image_url = ?');
         $stmt->execute([$url]);
         $path = uploadDirectory() . '/' . basename($url);
-        if (!(int)$stmt->fetchColumn() && is_file($path) && !unlink($path)) logError('Unreferenced image cleanup failed');
+        $references = (int)$stmt->fetchColumn();
+        if (function_exists('portalRow') && portalRow($db, 'SELECT version FROM app_migrations WHERE version = 4')) $references += (int)portalRow($db, 'SELECT COUNT(*) AS total FROM camp_revision_images WHERE image_url = ?', [$url])['total'];
+        if (!$references && is_file($path) && !unlink($path)) logError('Unreferenced image cleanup failed');
     }
 }
 

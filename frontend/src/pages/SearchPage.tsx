@@ -1,3 +1,4 @@
+import type { PublicProvider } from '../utils/portal';
 import { Modal } from '../components/Modal';
 import { apiFetch } from '../utils/api';
 import React, { useEffect, useMemo, useState, useRef, lazy, Suspense } from 'react';
@@ -23,6 +24,8 @@ export interface Camp {
   id: number;
   title: string;
   club_name: string;
+  provider?: PublicProvider;
+  provider_notice?: string;
   min_age: number;
   max_age: number;
   description: string;
@@ -99,6 +102,7 @@ export const SearchPage: React.FC = () => {
   const [camps, setCamps] = useState<Camp[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [viewMode, setViewMode] = useState<'list' | 'map'>(searchParams.get('view') === 'map' ? 'map' : 'list');
+  const [locationFilter, setLocationFilter] = useState(searchParams.get('location') || '');
   const [ageFilter, setAgeFilter] = useState(searchParams.get('age') || '');
   const [selectedTypes, setSelectedTypes] = useState<string[]>(searchParams.get('types')?.split(',').filter(Boolean) || []);
   const [startDateFilter, setStartDateFilter] = useState(searchParams.get('start_date') || '');
@@ -120,13 +124,14 @@ export const SearchPage: React.FC = () => {
   useEffect(() => {
     const params = new URLSearchParams();
     if (ageFilter) params.set('age', ageFilter);
+    if (locationFilter) params.set('location', locationFilter);
     if (selectedTypes.length) params.set('types', selectedTypes.join(','));
     if (startDateFilter) params.set('start_date', startDateFilter);
     if (endDateFilter) params.set('end_date', endDateFilter);
     if (holidayFilter) params.set('holiday', holidayFilter);
     if (viewMode === 'map') params.set('view', 'map');
     if (params.toString() !== searchParams.toString()) setSearchParams(params, { replace: true });
-  }, [ageFilter, selectedTypes, startDateFilter, endDateFilter, holidayFilter, viewMode, searchParams, setSearchParams]);
+  }, [ageFilter, locationFilter, selectedTypes, startDateFilter, endDateFilter, holidayFilter, viewMode, searchParams, setSearchParams]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -160,6 +165,7 @@ export const SearchPage: React.FC = () => {
       setError('');
       const params = new URLSearchParams();
       if (ageFilter) params.set('age', ageFilter);
+    if (locationFilter) params.set('location', locationFilter);
       if (selectedTypes.length > 0) params.set('types', selectedTypes.join(','));
       if (startDateFilter) params.set('start_date', startDateFilter);
       if (endDateFilter) params.set('end_date', endDateFilter);
@@ -183,7 +189,7 @@ export const SearchPage: React.FC = () => {
 
     void fetchCamps();
     return () => controller.abort();
-  }, [ageFilter, selectedTypes, startDateFilter, endDateFilter, bounds, viewMode, retry]);
+  }, [ageFilter, locationFilter, selectedTypes, startDateFilter, endDateFilter, bounds, viewMode, retry]);
 
   const typeOptions = useMemo(() => {
     const fallback = ['Sport', 'Lager', 'Kreativ', 'Bildung', 'Natur'];
@@ -191,7 +197,7 @@ export const SearchPage: React.FC = () => {
     return Array.from(new Set([...fallback, ...fromCamps]));
   }, [camps]);
 
-  const hasActiveFilters = ageFilter !== '' || selectedTypes.length > 0 || startDateFilter !== '' || endDateFilter !== '';
+  const hasActiveFilters = ageFilter !== '' || locationFilter !== '' || selectedTypes.length > 0 || startDateFilter !== '' || endDateFilter !== '';
   const additionalFilterCount = selectedTypes.length + (startDateFilter || endDateFilter ? (holidayFilter ? 0 : 1) : 0);
   const resultCountLabel = loading ? 'Suche läuft …' : error ? 'Suche nicht verfügbar' : `${camps.length} ${camps.length === 1 ? 'Angebot' : 'Angebote'}`;
 
@@ -217,6 +223,7 @@ export const SearchPage: React.FC = () => {
 
   const resetFilters = () => {
     setAgeFilter('');
+    setLocationFilter('');
     setSelectedTypes([]);
     setStartDateFilter('');
     setEndDateFilter('');
@@ -268,6 +275,7 @@ export const SearchPage: React.FC = () => {
     <div className="search-page">
       <div className="search-intro"><span className="eyebrow">Ferien in Westsachsen</span><h1>Eine gute Zeit beginnt hier.</h1><p>Entdecke Freizeiten für Kinder und Jugendliche – und finde das Angebot, das zu euch passt.</p></div>
       <section className="filter-panel" aria-label="Suchfilter">
+        <label className="field portal-location-filter"><span>Ort oder Einrichtung suchen</span><input type="search" maxLength={120} value={locationFilter} onChange={event => setLocationFilter(event.target.value)} placeholder="z. B. Zwickau" /></label>
         <div className="filter-group-main desktop-filter-controls">
           <div className="filter-title">
             <Filter size={20} />
@@ -337,7 +345,7 @@ export const SearchPage: React.FC = () => {
               >
                 <option value="">Alle Zeiträume</option>
                 {holidays.map((holiday) => (
-                  <option key={holiday.id} value={holiday.id}>{holiday.name}</option>
+                  <option key={holiday.id} value={holiday.id}>{holiday.name} ({holiday.starts_at.slice(0, 4)})</option>
                 ))}
               </select>
             </div>
@@ -402,7 +410,7 @@ export const SearchPage: React.FC = () => {
               <select value={holidayFilter} onChange={(event) => applyHolidayFilter(event.target.value)}>
                 <option value="">Alle Zeiträume</option>
                 {holidays.map((holiday) => (
-                  <option key={holiday.id} value={holiday.id}>{holiday.name}</option>
+                  <option key={holiday.id} value={holiday.id}>{holiday.name} ({holiday.starts_at.slice(0, 4)})</option>
                 ))}
               </select>
             </div>

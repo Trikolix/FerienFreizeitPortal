@@ -99,6 +99,7 @@ export const LoginPage: React.FC<{ onAuthenticated?: () => void; expectedUserId?
           <Link className="secondary-action auth-link" to="/passwort-vergessen">
             Passwort vergessen
           </Link>
+          <Link className="secondary-action auth-link" to="/registrieren">Neuen Träger registrieren</Link>
         </AccessibleForm>
       </section>
     </div>

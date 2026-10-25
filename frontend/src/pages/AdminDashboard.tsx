@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { AccessibleForm } from '../components/AccessibleForm';
 import { ExistingImages } from '../components/ExistingImages';
 import { appendImages, saveImageDescriptions, descriptionsComplete, fileDescription, type ImageMetadata } from '../utils/imageMetadata';
@@ -28,6 +29,7 @@ interface Camp {
   min_age: number;
   max_age: number;
   description: string;
+  confirmation_information?: string;
   type: string;
   categories?: string[];
   location_text: string;
@@ -292,7 +294,8 @@ export const AdminDashboard: React.FC = () => {
         });
       }
 
-      setNotice('Freizeit gespeichert.');
+      await apiFetch(`/api/camps/${editingCampId}/submit`, { method: 'POST' });
+      setNotice('Arbeitsfassung zur Prüfung eingereicht.');
       setEditingCampId(null);
       setCampEditData({});
       fetchCamps();
@@ -459,7 +462,7 @@ export const AdminDashboard: React.FC = () => {
   }, [dirty]);
 
   return (
-    <div className="dashboard-page">
+    <div className="dashboard-page"><p><Link to="/pruefung">Trägerprüfung, Angebotsfreigabe und Anbieterexport öffnen</Link></p>
       {notice && <p role="status" className="success-alert feedback-banner">{notice}</p>}
       {loading && <p role="status">Verwaltung wird geladen …</p>}
       {busy && <p role="status">Änderung wird gespeichert …</p>}
@@ -818,6 +821,10 @@ export const AdminDashboard: React.FC = () => {
               <span>Anmeldeschluss</span>
               <input type="datetime-local" name="registration_deadline" aria-invalid={Boolean(campFieldErrors.registration_deadline)} aria-describedby={campFieldErrors.registration_deadline ? 'admin-error-registration_deadline' : undefined} value={normalizeDateTimeLocal(campEditData.registration_deadline)} onChange={(e) => setCampEditData({ ...campEditData, registration_deadline: e.target.value })} required />
             </label>
+            <label className="field field-wide">
+              <span>Wichtige Informationen für Bestätigungsmails (optional)</span>
+              <textarea name="confirmation_information" rows={5} maxLength={5000} value={campEditData.confirmation_information || ''} onChange={event => setCampEditData({ ...campEditData, confirmation_information: event.target.value })} aria-invalid={Boolean(campFieldErrors.confirmation_information)} />
+            </label>
             <label className="field">
               <span>Breitengrad</span>
               <input type="number" step="any" name="location_lat" aria-invalid={Boolean(campFieldErrors.location_lat)} aria-describedby={campFieldErrors.location_lat ? 'admin-error-location_lat' : undefined} value={campEditData.location_lat ?? ''} onChange={(e) => setCampEditData({ ...campEditData, location_lat: Number(e.target.value) })} />
@@ -869,7 +876,7 @@ export const AdminDashboard: React.FC = () => {
                 <div className="management-main">
                    {camp.images?.length ? <img src={camp.images[0]} alt="" /> : <span className="thumb-placeholder"><ImagePlus size={22} /></span>}
                   <div>
-                    <h3>{camp.title}</h3>
+                    <h3>{camp.title?.trim() || 'Unbenannter Entwurf'}</h3>
                     <p>{camp.club_name} · {camp.categories?.join(', ') || camp.type} · {camp.location_text || 'Ort offen'}</p>
                     <span className={`status-pill ${camp.status === 'published' ? 'is-live' : 'is-muted'}`}>
                       {camp.status === 'published' ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
@@ -878,7 +885,7 @@ export const AdminDashboard: React.FC = () => {
                   </div>
                 </div>
                 <div className="item-actions">
-                  <button className="icon-button" type="button" onClick={() => handleEditCamp(camp)} aria-label={`${camp.title} bearbeiten`}>
+                  <button className="icon-button" type="button" onClick={() => handleEditCamp(camp)} aria-label={`${camp.title?.trim() || 'Unbenannter Entwurf'} bearbeiten`}>
                     <Pencil size={17} />
                   </button>
                   <select

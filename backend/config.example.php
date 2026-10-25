@@ -13,6 +13,7 @@ return [
     'TRUSTED_PROXIES' => '',
     'DB_CONNECTION' => 'mysql',
     'DB_HOST' => '127.0.0.1',
+    'DB_PORT' => 3306, // PostgreSQL: 5432.
     'DB_NAME' => 'westsachsen_camps',
     'DB_USER' => 'database_user',
     'DB_PASSWORD' => 'database_password',
@@ -29,4 +30,9 @@ return [
     'PLACE_REQUEST_MIN_SECONDS' => 3,
     'PLACE_REQUEST_EVENT_RETENTION_DAYS' => 90,
     'PLACE_REQUEST_LOG_SALT' => 'change-this-random-place-request-log-salt',
+    // Required before enabling production bookings; set after retention review.
+    'BOOKING_RETENTION_DAYS' => null,
+    // Production: run maintenance.php mail every minute, cleanup daily.
+    'PORTAL_MAIL_INLINE' => false,
+    'PROVIDER_NOTICE_TEMPLATE' => 'Anbieter dieser Freizeit ist {provider}. Der Jugendring Westsachsen betreibt das Vermittlungsportal.',
 ];

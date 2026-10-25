@@ -111,3 +111,19 @@ API ausschließlich an `127.0.0.1:18083` binden, `FFP_SQL_SMOKE=1` setzen und `n
 - Für einen wiederholten vollständigen Browserlauf den Wegwerf-Testcontainer neu starten. Die Login-Rate-Limits bleiben aktiv und werden nicht für Tests abgeschwächt. Keine zusätzliche manuelle Demo-Anmeldung während des vollständigen Laufs.
 - Die Legacy-SQL-Prüfung `backend/tests/image-migration-smoke.php` mit `FFP_SQL_SMOKE=1` **vor dem ersten API-Aufruf** ausschließlich in einer leeren Wegwerf-SQL-Datenbank ausführen. Sie legt absichtlich eine alte Bildtabelle an und prüft deren Migration. Die üblichen SQL-Smoke-Tests danach ausführen.
 - NVDA/Firefox, VoiceOver/Safari, reale mobile Bildschirmtastaturen und die unabhängige BITV-/WCAG-Prüfung sind noch offen. Details und redaktionelle Freigabevoraussetzungen: [Prüfbericht](docs/barrierefreiheit-pruefbericht.md).
+
+## Neue Buchungsstufe
+
+Die PHP-Suite enthält `PortalTest`: atomare/idempotente Reservierung, echte konkurrierende Zugriffe auf den letzten Platz, Duplikate, Gruppenwarteliste, Rollen, unveränderliche Angebots-/Buchungsfassungen, Mailwiederholungen, XLSX-Textzellen, Migration und Löschung. HTTP-Tests prüfen den Freigabeweg statt direkter Veröffentlichung.
+
+Vor Browser-Tests den isolierten Testbestand einmalig vorbereiten. `APP_ENV=development` und `DB_SQLITE_PATH` müssen auf dieselbe Wegwerf-Datenbank **im temporären Verzeichnis** wie beim Test-Backend zeigen:
+
+```sh
+APP_ENV=development DB_SQLITE_PATH=/tmp/portal-browser.sqlite PORTAL_MAIL_INLINE=0 php backend/tests/portal-fixtures.php seed
+```
+
+Für `booking.spec.ts` außerdem `PLAYWRIGHT_DB_SQLITE_PATH=/tmp/portal-browser.sqlite` setzen. Der CLI-Helfer liest Test-Mailtoken und rendert Mailvorschauen ausschließlich aus dieser temporären Datenbank und ist per HTTP gesperrt. Die Browserfälle umfassen direkte und mobile Anmeldung, die Sperre vergangener Angebote einschließlich zuvor geöffneter Formulare, Mailzusammenfassungen mit angebotsspezifischen Hinweisen, Bestätigung, Gruppenwarteliste, Anbieterregistrierung, Jahresdownload und Axe-Prüfungen. Das Test-Backend sollte mit `PORTAL_MAIL_INLINE=0` laufen, damit Token für die Prüfungen in der Outbox verfügbar bleiben; es werden keine echten E-Mails benötigt.
+
+Die SQL-Smoke-Tests verwenden ebenfalls den Träger-/Angebotsfreigabeweg. `backend/tests/portal-driver-smoke.php` prüft zusätzlich Migrationen, Angebotsfassungen, Reservierungen, Gruppenwartelisten, Duplikate, Statusaktionen, Outbox und die XLSX-Ausgabe direkt mit MySQL/PostgreSQL. Der CLI-Test verlangt `FFP_SQL_SMOKE=1`, `APP_ENV=development` und einen ausdrücklich als `ffp_portal_test…` benannten Datenbankbestand. `DB_PORT` erlaubt eigene lokale Testports. Eine direkte Veröffentlichung ist nicht mehr Bestandteil der Schnittstelle.
+
+Vor jedem Browserfall setzt der CLI-Helfer ausschließlich die Anmeldelimits der ausdrücklich ausgewählten temporären SQLite-Testdatenbank zurück. Produktionslimits bleiben unverändert und werden separat in den HTTP-Sicherheitstests geprüft. Für einen Test des gebauten Frontends `PLAYWRIGHT_BASE_URL` auf den isolierten Webserver setzen; dann startet Playwright keinen Vite-Server.

@@ -84,6 +84,8 @@ final class PlaceRequestsTest extends TestCase {
         self::assertSame('application_open', placeRequestState($this->camp(['allocation_method' => 'lottery']), $now));
         self::assertSame('not_open', placeRequestState($this->camp(['request_opens_at' => '2035-06-02 12:00:00']), $now));
         self::assertSame('closed', placeRequestState($this->camp(['registration_deadline' => '2035-06-01 12:00:00']), $now));
+        self::assertSame('closed', placeRequestState($this->camp(['starts_at' => '2035-06-01 12:00:00', 'registration_deadline' => null]), $now));
+        self::assertSame('closed', placeRequestState($this->camp(['starts_at' => '2035-05-01 10:00:00', 'ends_at' => '2035-05-08 12:00:00', 'registration_deadline' => '2035-07-01 12:00:00']), $now));
         self::assertSame('sold_out', placeRequestState($this->camp(['place_requests_enabled' => 0, 'status' => 'fully_booked']), $now));
         self::assertSame('contact_only', placeRequestState($this->camp(['place_requests_enabled' => 0]), $now));
     }

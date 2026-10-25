@@ -6,7 +6,9 @@
         "ext-dom": "*",
         "ext-mbstring": "*",
         "ext-gd": "*",
-        "ezyang/htmlpurifier": "^4.19.1"
+        "ezyang/htmlpurifier": "^4.19.1",
+        "phpoffice/phpspreadsheet": "^5.10",
+        "symfony/polyfill-intl-normalizer": "^1.33"
     },
     "scripts": {
         "test": "phpunit tests --do-not-cache-result"

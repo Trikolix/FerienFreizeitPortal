@@ -1,5 +1,7 @@
 <?php
 use PHPUnit\Framework\TestCase;
+if (!defined('TESTING')) define('TESTING', true);
+require_once __DIR__ . '/../index.php';
 
 final class HttpSecurityTest extends TestCase {
     private static $process;
@@ -16,7 +18,7 @@ final class HttpSecurityTest extends TestCase {
         $address = stream_socket_get_name($socket, false);
         fclose($socket);
         self::$base = 'http://' . $address;
-        $environment = array_merge(getenv(), ['APP_ENV' => 'development', 'APP_BASE_URL' => self::$base, 'DB_CONNECTION' => 'sqlite', 'DB_SQLITE_PATH' => self::$directory . '/test.sqlite', 'SEED_DEMO_DATA' => '1', 'UPLOAD_DIR' => self::$directory . '/uploads', 'APP_LOG_DIR' => self::$directory . '/logs']);
+        $environment = array_merge(getenv(), ['APP_ENV' => 'development', 'APP_KEY' => 'http-test-key-for-token-verification', 'PORTAL_MAIL_INLINE' => '0', 'APP_BASE_URL' => self::$base, 'DB_CONNECTION' => 'sqlite', 'DB_SQLITE_PATH' => self::$directory . '/test.sqlite', 'SEED_DEMO_DATA' => '1', 'UPLOAD_DIR' => self::$directory . '/uploads', 'APP_LOG_DIR' => self::$directory . '/logs']);
         self::$process = proc_open([PHP_BINARY, '-d', 'sendmail_path=/bin/false', '-S', $address, __DIR__ . '/../index.php'], [0 => ['pipe', 'r'], 1 => ['file', self::$directory . '/server.log', 'a'], 2 => ['file', self::$directory . '/server.log', 'a']], $pipes, dirname(__DIR__), $environment);
         for ($i = 0; $i < 100; $i++) {
             $body = @file_get_contents(self::$base . '/api/holidays');
@@ -32,6 +34,9 @@ final class HttpSecurityTest extends TestCase {
         self::$database->exec('DELETE FROM auth_limits');
         $this->club = $this->login('testverein', 'testverein');
         $this->admin = $this->login('admin', 'admin');
+        $provider = portalProvider(self::$database, $this->club['user']['id']);
+        $profile = portalProfile(['public_name' => 'Testverein Westsachsen', 'legal_name' => 'Testverein e. V.', 'legal_form' => 'Verein', 'street' => 'Testweg 1', 'postal_code' => '08056', 'city' => 'Zwickau', 'country' => 'DE', 'contact_info' => 'Kontakt', 'missing_tax_reason' => 'Testfall ohne vergebene Kennung', 'missing_register_reason' => 'Nicht eingetragen', 'residence_countries' => ['DE']], true);
+        portalExec(self::$database, "UPDATE providers SET status = 'approved', email_verified = 1, profile_data = ? WHERE id = ?", [portalJson($profile), $provider['id']]);
     }
 
     private function request(string $path, string $method = 'GET', ?array $data = null, array $auth = [], array $extra = [], ?string $body = null): array {
@@ -54,6 +59,13 @@ final class HttpSecurityTest extends TestCase {
         $cookie = '';
         foreach ($response['headers'] as $header) if (preg_match('/^Set-Cookie: ([^;]+)/i', $header, $match)) $cookie = $match[1];
         return ['cookie' => $cookie, 'csrf' => $response['body']['csrf_token'], 'user' => $response['body']['user']];
+    }
+
+    private function publish(int $id): void {
+        $submitted = $this->request("/api/camps/$id/submit", 'POST', [], $this->club);
+        self::assertSame(200, $submitted['status'], $submitted['raw']);
+        $approved = $this->request("/api/admin/camps/$id/review", 'POST', ['decision' => 'approved', 'revision_id' => $submitted['body']['revision_id']], $this->admin);
+        self::assertSame(200, $approved['status'], $approved['raw']);
     }
 
     private function camp(array $overrides = []): array {
@@ -82,11 +94,13 @@ final class HttpSecurityTest extends TestCase {
         $path = "/api/camps/$id/images/$imageId";
         self::assertSame(401, $this->request($path, 'PUT', ['alt_text' => 'Bäume'])['status']);
         self::assertSame(403, $this->request($path, 'PUT', ['alt_text' => 'Bäume'], ['cookie' => $this->club['cookie']])['status']);
-        self::assertSame(422, $this->request("/api/camps/$id", 'PUT', $this->camp(['status' => 'published']), $this->club)['status']);
+        self::assertSame(200, $this->request("/api/camps/$id", 'PUT', $this->camp(), $this->club)['status']);
+        self::assertSame(422, $this->request("/api/camps/$id/submit", 'POST', [], $this->club)['status']);
         self::assertSame(422, $this->request($path, 'PUT', ['alt_text' => str_repeat('x', 501)], $this->club)['status']);
         self::assertSame(200, $this->request($path, 'PUT', ['alt_text' => 'Kinder am Waldrand', 'is_decorative' => false], $this->club)['status']);
         self::assertSame(200, $this->request("/api/camps/$id", 'PUT', $this->camp(['status' => 'published']), $this->club)['status']);
-        self::assertSame(422, $this->request($path, 'PUT', ['alt_text' => ''], $this->club)['status']);
+        $this->publish($id);
+        self::assertSame(200, $this->request($path, 'PUT', ['alt_text' => ''], $this->club)['status']);
         $public = $this->request("/api/camps/$id")['body'];
         self::assertSame(['/uploads/metadata-test.png'], $public['images']);
         self::assertSame('Kinder am Waldrand', $public['image_metadata'][0]['alt_text']);
@@ -94,7 +108,7 @@ final class HttpSecurityTest extends TestCase {
         $copyResponse = $this->request("/api/camps/$id/duplicate", 'POST', [], $this->club);
         self::assertSame(201, $copyResponse['status'], $copyResponse['raw']);
         $copy = $copyResponse['body']['camp'];
-        self::assertSame($public['image_metadata'][0]['alt_text'], $copy['image_metadata'][0]['alt_text']);
+        self::assertNull($copy['image_metadata'][0]['alt_text'], 'The copy uses the current working image description; the published revision remains unchanged.');
         self::assertNotSame($imageId, $copy['image_metadata'][0]['id']);
         self::assertSame(404, $this->request('/api/camps/' . $copy['id'] . '/images/' . $imageId, 'PUT', ['alt_text' => 'Wrong camp'], $this->club)['status']);
         self::assertSame(200, $this->request($path, 'PUT', ['is_decorative' => true], $this->admin)['status']);
@@ -111,8 +125,9 @@ final class HttpSecurityTest extends TestCase {
         self::assertSame(404, $this->request('/api/camps/' . $id)['status']);
         self::assertSame(200, $this->request('/api/camps/' . $id, 'GET', null, $this->club)['status']);
         self::assertSame(200, $this->request('/api/camps/' . $id, 'GET', null, $this->admin)['status']);
-        self::assertSame(422, $this->request('/api/camps/' . $id, 'PUT', ['status' => 'published'], $this->club)['status']);
+        self::assertSame(422, $this->request('/api/camps/' . $id . '/submit', 'POST', [], $this->club)['status']);
         self::assertSame(200, $this->request('/api/camps/' . $id, 'PUT', $this->camp(['status' => 'published']), $this->club)['status']);
+        $this->publish($id);
         $public = $this->request('/api/camps/' . $id)['body'];
         self::assertArrayNotHasKey('username', $public);
         self::assertArrayNotHasKey('club_id', $public);
@@ -131,7 +146,7 @@ final class HttpSecurityTest extends TestCase {
         self::assertSame(400, $this->request('/api/camps', 'POST', null, $this->club, [], '{bad')['status']);
     }
 
-    public function testPlaceAvailabilityIsPrivateAndPlaceRequestsDoNotPersistContents(): void {
+    public function testPlaceAvailabilityIsPrivateAndLegacyMailRequestsAreRetired(): void {
         $create = $this->request('/api/camps', 'POST', $this->camp([
             'status' => 'published',
             'place_requests_enabled' => true,
@@ -144,6 +159,7 @@ final class HttpSecurityTest extends TestCase {
         self::assertSame(201, $create['status'], $create['raw']);
         $id = $create['body']['id'];
 
+        $this->publish($id);
         $public = $this->request('/api/camps/' . $id);
         self::assertSame(200, $public['status']);
         self::assertSame('few_places', $public['body']['availability_state']);
@@ -158,6 +174,8 @@ final class HttpSecurityTest extends TestCase {
         $updated = $this->request("/api/camps/$id/availability", 'PUT', ['places_remaining' => 0], $this->club);
         self::assertSame(200, $updated['status'], $updated['raw']);
         self::assertSame('fully_booked', $updated['body']['camp']['status']);
+        self::assertSame(0, $updated['body']['camp']['places_remaining']);
+        self::assertSame('fully_booked', $this->request('/api/camps/' . $id)['body']['status']);
         self::assertSame('waitlist', $this->request('/api/camps/' . $id)['body']['availability_state']);
 
         $campStart = strtotime('+40 days');
@@ -167,11 +185,40 @@ final class HttpSecurityTest extends TestCase {
             'message' => 'Bitte melden Sie sich bei uns.', 'privacy_acknowledged' => true, 'website' => '', 'form_started_at' => time() - 10,
         ];
         $submission = $this->request("/api/camps/$id/place-requests", 'POST', $payload);
-        self::assertSame(503, $submission['status'], $submission['raw']);
-        $event = self::$database->query("SELECT * FROM place_request_events WHERE camp_id = $id ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
-        self::assertSame('delivery_failed', $event['action']);
-        self::assertStringNotContainsString('Lina', json_encode($event));
-        self::assertStringNotContainsString($payload['participants'][0]['birth_date'], json_encode($event));
+        self::assertSame(410, $submission['status'], $submission['raw']);
+        self::assertSame([], portalRows(self::$database, 'SELECT * FROM place_request_events WHERE camp_id = ?', [$id]));
+    }
+
+    public function testProviderOnboardingRequiresVerifiedEmailAndExactReviewedProfile(): void {
+        $email = 'organisation-' . bin2hex(random_bytes(4)) . '@example.test';
+        $registered = $this->request('/api/providers/register', 'POST', ['email' => $email, 'password' => 'Organisation-123456']);
+        self::assertSame(202, $registered['status'], $registered['raw']);
+        self::assertSame(401, $this->request('/api/login', 'POST', ['username' => $email, 'password' => 'Organisation-123456'])['status']);
+        self::assertSame(410, $this->request('/api/providers/verify-email', 'POST', ['token' => str_repeat('0', 64)])['status']);
+        $job = portalRow(self::$database, "SELECT * FROM mail_outbox WHERE recipient = ? AND kind = 'provider_verify' ORDER BY id DESC LIMIT 1", [$email]);
+        $nonce = portalDecode($job['payload_json'])['token_nonce'];
+        $token = hash_hmac('sha256', $nonce, 'http-test-key-for-token-verification');
+        self::assertSame(200, $this->request('/api/providers/verify-email', 'POST', ['token' => $token])['status']);
+        $login = $this->request('/api/login', 'POST', ['username' => $email, 'password' => 'Organisation-123456']);
+        self::assertSame(200, $login['status'], $login['raw']);
+        $cookie = '';
+        foreach ($login['headers'] as $header) if (preg_match('/^Set-Cookie: ([^;]+)/i', $header, $match)) $cookie = $match[1];
+        $auth = ['cookie' => $cookie, 'csrf' => $login['body']['csrf_token']];
+        self::assertSame(403, $this->request('/api/camps', 'POST', $this->camp(), $auth)['status']);
+        self::assertSame(403, $this->request('/api/admin/providers', 'GET', null, $auth)['status']);
+        $profile = ['public_name' => 'Organisation', 'legal_name' => 'Organisation e. V.', 'legal_form' => 'Verein', 'street' => 'Testweg 1', 'postal_code' => '08056', 'city' => 'Zwickau', 'country' => 'DE', 'contact_info' => 'Kontakt', 'missing_register_reason' => 'Nicht eingetragen', 'tax_ids' => [['country' => 'DE', 'number' => '000123']], 'residence_countries' => ['DE']];
+        self::assertSame(200, $this->request('/api/provider-profile', 'PUT', $profile, $auth)['status']);
+        $submitted = $this->request('/api/provider-profile/submit', 'POST', [], $auth);
+        self::assertSame(200, $submitted['status'], $submitted['raw']);
+        $providerId = $submitted['body']['id'];
+        self::assertSame(200, $this->request('/api/provider-profile', 'PUT', [...$profile, 'legal_name' => 'Geänderter Name'], $auth)['status']);
+        self::assertSame(409, $this->request("/api/admin/providers/$providerId/review", 'POST', ['decision' => 'approved', 'profile_version' => $submitted['body']['version']], $this->admin)['status']);
+        $current = $this->request('/api/provider-profile/submit', 'POST', [], $auth);
+        self::assertSame(200, $this->request("/api/admin/providers/$providerId/review", 'POST', ['decision' => 'approved', 'profile_version' => $current['body']['version']], $this->admin)['status']);
+        self::assertSame(201, $this->request('/api/camps', 'POST', $this->camp(), $auth)['status']);
+        self::$database->prepare('UPDATE users SET is_active = 0 WHERE email = ?')->execute([$email]);
+        self::assertSame(200, $this->request('/api/providers/verify-email', 'POST', ['token' => $token])['status']);
+        self::assertSame(0, (int)portalRow(self::$database, 'SELECT is_active FROM users WHERE email = ?', [$email])['is_active'], 'A used verification link must not reactivate a disabled account.');
     }
 
     public function testRateLimitCannotBeBypassedWithForwardedHeader(): void {

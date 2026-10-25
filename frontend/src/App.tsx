@@ -1,5 +1,5 @@
 import React, { useEffect, useState, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { SearchPage } from './pages/SearchPage';
 import { LoginPage } from './pages/LoginPage';
@@ -13,12 +13,25 @@ import { SetPasswordPage } from './pages/SetPasswordPage';
 import { ContactPage } from './pages/ContactPage';
 import { DatenschutzPage } from './pages/DatenschutzPage';
 import './index.css';
+import './portal.css';
 import { MotionConfig } from 'framer-motion';
 import { AccessibilityPage } from './pages/AccessibilityPage';
 import { NotFoundPage } from './pages/NotFoundPage';
+import { ProviderRegistrationPage, ProviderVerificationPage } from './pages/ProviderRegistrationPage';
+import { ProviderProfilePage } from './pages/ProviderProfilePage';
+import { BookingPage, BookingStatusPage } from './pages/BookingPage';
+import { BookingManagementPage } from './pages/BookingManagementPage';
+import { PortalAdminPage } from './pages/PortalAdminPage';
 
 const ClubDashboard = lazy(() => import('./pages/ClubDashboard').then((m) => ({ default: m.ClubDashboard })));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard').then((m) => ({ default: m.AdminDashboard })));
+
+function ApprovedProviderRoute({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore(state => state.user);
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role === 'user' && user.provider_status !== 'approved') return <Navigate to="/traegerprofil" replace />;
+  return children;
+}
 
 export const App: React.FC = () => {
   const { initialized, initialize, user, error } = useAuthStore();
@@ -29,7 +42,7 @@ export const App: React.FC = () => {
     window.addEventListener('session-expired', onExpiry);
     return () => window.removeEventListener('session-expired', onExpiry);
   }, [initialize]);
-  if (!initialized) return <p role="status">Portal wird geladen …</p>;
+  if (!initialized) return <main id="main-content"><h1>Ferienfreizeiten Westsachsen</h1><p role="status">Portal wird geladen …</p></main>;
   return (
     <MotionConfig reducedMotion="user"><BrowserRouter>
       {error && <p className="alert" role="alert">{error} <button onClick={() => void initialize()}>Erneut versuchen</button></p>}
@@ -43,10 +56,17 @@ export const App: React.FC = () => {
           <Route index element={<SearchPage />} />
           <Route path="freizeiten/:id" element={<CampDetailPage />} />
           <Route path="login" element={<LoginPage />} />
+          <Route path="registrieren" element={<ProviderRegistrationPage />} />
+          <Route path="registrierung-bestaetigen" element={<ProviderVerificationPage />} />
+          <Route path="traegerprofil" element={<ProviderProfilePage />} />
+          <Route path="anmelden/:campId" element={<BookingPage />} />
+          <Route path="buchung" element={<BookingStatusPage />} />
+          <Route path="buchungen" element={<ApprovedProviderRoute><BookingManagementPage /></ApprovedProviderRoute>} />
+          <Route path="pruefung" element={<PortalAdminPage />} />
           <Route path="passwort-vergessen" element={<ForgotPasswordPage />} />
           <Route path="passwort-setzen" element={<SetPasswordPage />} />
           <Route path="kontakt" element={<ContactPage />} />
-          <Route path="dashboard" element={<ClubDashboard />} />
+          <Route path="dashboard" element={<ApprovedProviderRoute><ClubDashboard /></ApprovedProviderRoute>} />
           <Route path="admin" element={<AdminDashboard />} />
           <Route path="einstellungen" element={<AccountSettingsPage />} />
           <Route path="impressum" element={<Impressum />} />

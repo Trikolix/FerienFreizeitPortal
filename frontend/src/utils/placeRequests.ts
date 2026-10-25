@@ -43,8 +43,8 @@ export function availabilityTone(state?: AvailabilityState): string {
 }
 
 export function placeRequestActionLabel(state?: AvailabilityState): string | null {
-  if (state === 'available' || state === 'few_places') return 'Platz anfragen';
-  if (state === 'waitlist') return 'Für Warteliste anfragen';
+  if (state === 'available' || state === 'few_places') return 'Anmelden';
+  if (state === 'waitlist') return 'Für Warteliste anmelden';
   if (state === 'application_open') return 'Für einen Platz bewerben';
   return null;
 }
@@ -54,11 +54,14 @@ export function previewAvailabilityState(camp: PlaceRequestCampFields & {
   capacity_total?: number;
   places_remaining?: number;
   registration_deadline?: string;
+  starts_at?: string;
+  ends_at?: string;
   waitlist_enabled?: boolean;
 }): AvailabilityState {
+  const now = Date.now();
+  if ([camp.starts_at, camp.ends_at].some(value => value && new Date(value.replace(' ', 'T')).getTime() <= now)) return 'closed';
   if (!camp.place_requests_enabled) return camp.status === 'fully_booked' ? 'sold_out' : 'contact_only';
   if (camp.capacity_total == null || camp.places_remaining == null) return 'contact_only';
-  const now = Date.now();
   const opens = camp.request_opens_at ? new Date(camp.request_opens_at.replace(' ', 'T')).getTime() : null;
   const deadline = camp.registration_deadline ? new Date(camp.registration_deadline.replace(' ', 'T')).getTime() : null;
   if (opens && now < opens) return 'not_open';

@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom';
+import { providerStatus } from '../utils/portal';
 import { AccessibleForm } from '../components/AccessibleForm';
 import { ExistingImages } from '../components/ExistingImages';
 import { appendImages, saveImageDescriptions, descriptionsComplete, fileDescription, type ImageMetadata } from '../utils/imageMetadata';
@@ -18,10 +20,15 @@ import { MapPicker } from '../components/MapPicker';
 
 interface Camp {
   id: number;
+  review_status?: string;
+  review_reason?: string;
+  external_occupied?: number;
+  occupied_in_portal?: number;
   title: string;
   min_age: number;
   max_age: number;
   description: string;
+  confirmation_information?: string;
   type: string;
   categories?: string[];
   location_text: string;
@@ -216,7 +223,8 @@ export const ClubDashboard: React.FC = () => {
 
       };
 
-      const finalData = { ...formData, status: requestedStatus ?? formData.status ?? 'draft' };
+      const shouldSubmit = ['published', 'fully_booked'].includes(requestedStatus ?? formData.status ?? 'draft');
+      const finalData = { ...formData, allocation_method: 'request', status: 'draft' };
 
       if (!isEditing && selectedFiles?.length) {
         const formDataObj = new FormData();
@@ -259,13 +267,14 @@ export const ClubDashboard: React.FC = () => {
         }
       }
 
+      if (shouldSubmit && campId) await apiFetch(`/api/camps/${campId}/submit`, { method: 'POST' });
       setIsEditing(false);
       setIsEditorOpen(false);
       setInitialFormData('{}');
       setFormData({});
       setSelectedFiles([]);
       setFormNotice('');
-      setNotice('Freizeit erfolgreich gespeichert.');
+      setNotice(shouldSubmit ? 'Angebot zur Prüfung eingereicht.' : 'Arbeitsfassung gespeichert.');
       fetchCamps();
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'Freizeit konnte nicht gespeichert werden');
@@ -514,6 +523,7 @@ export const ClubDashboard: React.FC = () => {
 
   return (
     <div className="dashboard-page">
+      <p className="portal-actions"><Link to="/buchungen">Anmeldungen &amp; Wartelisten bearbeiten</Link><Link to="/traegerprofil">Trägerstammdaten</Link></p>
       {notice && <p className="success-alert" role="status">{notice}</p>}
       {busy && <p role="status">Änderung wird gespeichert …</p>}
       <fieldset className="action-scope" disabled={busy} inert={busy}>
@@ -653,7 +663,7 @@ export const ClubDashboard: React.FC = () => {
 
           <section className="editor-step field-wide">
             <button className="editor-step-toggle" type="button" onClick={() => setActiveEditorSection('places')} aria-expanded={activeEditorSection === 'places'}>
-              <span><strong>3. Plätze &amp; Anfragen <span className="step-status">{!formData.place_requests_enabled ? 'Optional' : Object.keys(checklist).some((field) => fieldSection[field] === 'places') ? 'Angaben offen' : 'Aktiv'}</span></strong><small>Kapazität, Vergabe und interne Empfängeradresse</small></span>
+              <span><strong>3. Plätze &amp; Reservierung <span className="step-status">{!formData.place_requests_enabled ? 'Optional' : Object.keys(checklist).some((field) => fieldSection[field] === 'places') ? 'Angaben offen' : 'Aktiv'}</span></strong><small>Kapazität, Vergabe und interne Empfängeradresse</small></span>
               <ChevronDown size={18} />
             </button>
             {activeEditorSection === 'places' && <div className="editor-step-content dashboard-form-grid">
@@ -664,15 +674,14 @@ export const ClubDashboard: React.FC = () => {
                   checked={Boolean(formData.place_requests_enabled)}
                   onChange={(event) => setFormData({ ...formData, place_requests_enabled: event.target.checked })}
                 />
-                <span>Unverbindliche Platzanfragen über das Portal ermöglichen</span>
+                <span>Anmeldungen mit vorläufiger Reservierung über das Portal ermöglichen</span>
               </label>
-              <p className="field-wide editor-help">Anfragen reservieren keine Plätze und verändern den Bestand nicht automatisch. Buchung, Zusage und Bezahlung bleiben bei deinem Verein.</p>
+              <p className="field-wide editor-help">Anmeldungen reservieren sofort Plätze bis zu deiner Entscheidung. Bestätigungen, Stornierungen und Wartelisten bearbeitest du im Portal. Zahlungen werden noch nicht erfasst.</p>
               {formData.place_requests_enabled && <>
                 <label className="field field-wide">
                   <span>Vergabeverfahren</span>
                   <select name="allocation_method" value={formData.allocation_method || 'request'} onChange={(event) => setFormData({ ...formData, allocation_method: event.target.value as 'request' | 'lottery', waitlist_enabled: event.target.value === 'lottery' ? false : formData.waitlist_enabled })} aria-invalid={Boolean(fieldErrors.allocation_method)}>
-                    <option value="request">Laufende Platzanfrage</option>
-                    <option value="lottery">Bewerbungszeitraum mit externer Verlosung</option>
+                    <option value="request">Direkte vorläufige Reservierung</option>
                   </select>
                 </label>
                 <label className="field">
@@ -686,27 +695,32 @@ export const ClubDashboard: React.FC = () => {
                     onChange={(event) => {
                       const capacity = event.target.value === '' ? undefined : Number(event.target.value);
                       const remaining = capacity == null ? formData.places_remaining : formData.places_remaining == null ? capacity : Math.min(formData.places_remaining, capacity);
-                      setFormData({ ...formData, capacity_total: capacity, places_remaining: remaining });
+                      setFormData({ ...formData, capacity_total: capacity, places_remaining: capacity == null ? remaining : Math.max(0, capacity - (formData.external_occupied ?? 0) - (formData.occupied_in_portal ?? 0)) });
                     }}
                     aria-invalid={Boolean(fieldErrors.capacity_total)}
                     required
                   />
                 </label>
                 <label className="field">
-                  <span>Aktuell freie Plätze</span>
-                  <input name="places_remaining" type="number" min="0" max={formData.capacity_total ?? 10000} value={formData.places_remaining ?? ''} onChange={(event) => setFormData({ ...formData, places_remaining: event.target.value === '' ? undefined : Number(event.target.value) })} aria-invalid={Boolean(fieldErrors.places_remaining)} required />
+                  <span>Extern belegte Plätze</span>
+                  <input name="external_occupied" type="number" min="0" max={formData.capacity_total ?? 10000} value={formData.external_occupied ?? 0} onChange={event => { const external = Number(event.target.value); setFormData({ ...formData, external_occupied: external, places_remaining: Math.max(0, (formData.capacity_total ?? 0) - external - (formData.occupied_in_portal ?? 0)) }); }} />
                 </label>
                 <label className="field">
-                  <span>{formData.allocation_method === 'lottery' ? 'Bewerbungen möglich ab' : 'Anfragen möglich ab (optional)'}</span>
+                  <span>{formData.allocation_method === 'lottery' ? 'Bewerbungen möglich ab' : 'Anmeldungen möglich ab (optional)'}</span>
                   <input name="request_opens_at" type="datetime-local" value={normalizeDateTimeLocal(formData.request_opens_at)} onChange={(event) => setFormData({ ...formData, request_opens_at: event.target.value })} aria-invalid={Boolean(fieldErrors.request_opens_at)} required={formData.allocation_method === 'lottery'} />
                 </label>
                 <label className="field">
                   <span>Interne Anfrageadresse (optional)</span>
                   <input name="place_request_email" type="email" maxLength={254} value={formData.place_request_email || ''} onChange={(event) => setFormData({ ...formData, place_request_email: event.target.value })} placeholder={user?.email || 'Konto-E-Mail wird verwendet'} aria-invalid={Boolean(fieldErrors.place_request_email)} />
                 </label>
+                <label className="field field-wide">
+                  <span>Wichtige Informationen für Bestätigungsmails (optional)</span>
+                  <textarea name="confirmation_information" rows={5} maxLength={5000} value={formData.confirmation_information || ''} onChange={event => setFormData({ ...formData, confirmation_information: event.target.value })} aria-invalid={Boolean(fieldErrors.confirmation_information)} aria-describedby="confirmation-information-help" />
+                  <small id="confirmation-information-help">Zum Beispiel Treffpunkt, Packliste oder Hinweise zur Anreise. Dieser Text wird mit jeder Anmelde- und Statusbestätigung dieser Freizeit verschickt. Änderungen werden mit dem Angebot zur Prüfung eingereicht.</small>
+                </label>
                 {formData.allocation_method !== 'lottery' && <label className="toggle-field field-wide">
                   <input name="waitlist_enabled" type="checkbox" checked={Boolean(formData.waitlist_enabled)} onChange={(event) => setFormData({ ...formData, waitlist_enabled: event.target.checked })} />
-                  <span>Bei null freien Plätzen Wartelistenanfragen erlauben</span>
+                  <span>Bei null freien Plätzen Wartelistenanmeldungen erlauben</span>
                 </label>}
                 {formData.allocation_method === 'lottery' && <p className="field-wide editor-help">Bewerbungen schließen automatisch am Anmeldeschluss. Verlosung, Nachrücken und Zusagen bearbeitet der Anbieter außerhalb des Portals.</p>}
               </>}
@@ -772,7 +786,7 @@ export const ClubDashboard: React.FC = () => {
                 </button>
                 <button className="primary-action" type="submit" name="status" value="published" disabled={isPastStart(formData.starts_at)}>
                    <Plus size={18} />
-                   Veröffentlichen
+                   Zur Prüfung einreichen
                 </button>
                 <button className="secondary-action" type="button" onClick={() => setIsPreviewOpen(true)} title="Vorschau" aria-label="Vorschau">
                   <Eye size={18} />
@@ -785,7 +799,7 @@ export const ClubDashboard: React.FC = () => {
                 </button>
                 <button className="primary-action" type="submit" name="status" value="published" disabled={isPastStart(formData.starts_at)}>
                   <CheckCircle2 size={18} />
-                  Veröffentlichen
+                  Zur Prüfung einreichen
                 </button>
                 <button className="secondary-action" type="button" onClick={requestCloseEditor}>
                   Abbrechen
@@ -796,9 +810,9 @@ export const ClubDashboard: React.FC = () => {
               </>
             ) : (
               <>
-                <button className="primary-action" type="submit">
+                <button className="primary-action" type="submit" name="status" value="published">
                   <CheckCircle2 size={18} />
-                  Speichern
+                  Änderungen zur Prüfung einreichen
                 </button>
                 <button className="secondary-action" type="button" onClick={requestCloseEditor}>
                   Abbrechen
@@ -869,7 +883,7 @@ export const ClubDashboard: React.FC = () => {
                 <div className="management-main">
                   {camp.images?.length ? <img src={camp.images[0]} alt={`Bild zu ${camp.title}`} /> : <span className="thumb-placeholder"><ImagePlus size={22} /></span>}
                   <div>
-                    <h3>{camp.title}</h3>
+                    <h3>{camp.title?.trim() || 'Unbenannter Entwurf'}</h3>
                     <p>{camp.categories?.join(', ') || camp.type} · {camp.min_age}-{camp.max_age} Jahre</p>
                     <p className="management-meta"><CalendarDays size={15} /> {formatCampDate(camp.starts_at)} <MapPin size={15} /> {camp.location_text || 'Ort offen'}</p>
                     {camp.lifecycle_state === 'past' || camp.lifecycle_state === 'ongoing' ? (
@@ -882,11 +896,13 @@ export const ClubDashboard: React.FC = () => {
                       {camp.status === 'published' ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
                       {getStatusLabel(camp.status)}
                     </span>
+                    <span className="status-pill">Prüfung: {providerStatus[camp.review_status || 'draft'] || camp.review_status}</span>
+                    {camp.review_reason && <p className="alert">{camp.review_reason}</p>}
                     {camp.place_requests_enabled && camp.capacity_total != null && camp.places_remaining != null && (
                       <div className="availability-quick-edit">
-                        <span><strong>{camp.places_remaining}</strong> von {camp.capacity_total} Plätzen frei · {camp.allocation_method === 'lottery' ? 'Bewerbung/Los' : 'Platzanfrage'}</span>
+                        <span><strong>{camp.places_remaining}</strong> von {camp.capacity_total} Plätzen frei · {camp.occupied_in_portal || 0} im Portal belegt · {camp.external_occupied || 0} extern belegt</span>
                         <label>
-                          Freie Plätze
+                          Freie Plätze nach externer Belegung
                           <input
                             type="number"
                             min="0"
@@ -914,15 +930,7 @@ export const ClubDashboard: React.FC = () => {
                   <details className="camp-actions-menu">
                     <summary aria-label={`Weitere Aktionen für ${camp.title}`}><MoreHorizontal size={20} /></summary>
                     <div>
-                      <label>
-                        Status
-                        <select className="status-select" value={camp.status} onChange={(event) => updateStatus(camp, event.target.value)}>
-                          <option value="draft">Entwurf</option>
-                          <option value="published" disabled={isPastStart(camp.starts_at)}>Veröffentlicht</option>
-                          <option value="fully_booked">Ausgebucht</option>
-                          <option value="archived">Archiv</option>
-                        </select>
-                      </label>
+                      <button className="secondary-action" type="button" onClick={() => void updateStatus(camp, 'archived')}>Archivieren</button>
                       <button className="danger-action" type="button" onClick={() => setCampToDelete(camp)}><Trash2 size={17} /> Freizeit löschen</button>
                     </div>
                   </details>

@@ -13,7 +13,7 @@ function normalizedDate($value): ?string {
 function validateCampPayload(array $data, array $owner, ?array $existing = null): array {
     $errors = [];
     $clean = [];
-    foreach (['title' => 200, 'description' => 30000, 'location_text' => 500] as $key => $max) {
+    foreach (['title' => 200, 'description' => 30000, 'location_text' => 500, 'confirmation_information' => 5000] as $key => $max) {
         $value = $data[$key] ?? '';
         if (!is_string($value) || mb_strlen($value) > $max) {
             $errors[$key] = 'Bitte einen Text mit höchstens ' . $max . ' Zeichen eingeben.';

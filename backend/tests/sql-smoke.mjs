@@ -9,7 +9,7 @@ if (process.env.FFP_SQL_SMOKE !== '1' || !base || new URL(base).hostname !== '12
 async function request(path, method = 'GET', data, auth = {}) {
   const response = await fetch(base + path, {
     method,
-    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'FerienFreizeitPortal', ...auth },
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'FerienFreizeitPortal', Origin: base, ...auth },
     body: data === undefined ? undefined : JSON.stringify(data),
   });
   return { status: response.status, body: await response.json().catch(() => null), headers: response.headers };
@@ -24,6 +24,15 @@ async function login(name) {
 
 const club = await login('testverein');
 const admin = await login('admin');
+let profile = await request('/api/provider-profile', 'GET', undefined, club);
+if (profile.body.status !== 'approved') {
+  const data = { ...profile.body.profile, public_name: 'SQL Testverein', legal_name: 'SQL Testverein e. V.', legal_form: 'Verein', street: 'Testweg 1', postal_code: '08056', city: 'Zwickau', country: 'DE', contact_info: 'Kontakt', missing_register_reason: 'Testfall', missing_tax_reason: 'Testfall', residence_countries: ['DE'] };
+  assert.equal((await request('/api/provider-profile', 'PUT', data, club)).status, 200);
+  profile = await request('/api/provider-profile/submit', 'POST', {}, club);
+  assert.equal(profile.status, 200);
+  assert.equal((await request(`/api/admin/providers/${profile.body.id}/review`, 'POST', { decision: 'approved', profile_version: profile.body.version }, admin)).status, 200);
+}
+
 const before = await request('/api/camps?all=1', 'GET', undefined, admin);
 assert.equal(before.status, 200);
 const create = await request('/api/camps', 'POST', { title: 'SQL smoke draft' }, club);
@@ -43,9 +52,13 @@ assert.equal((await request(`/api/camps/${id}/images/${imageId}`, 'PUT', { alt_t
 assert.equal((await request(`/api/camps/${id}/images/${imageId}`, 'PUT', { alt_text: 'x'.repeat(501) }, club)).status, 422);
 assert.equal((await request(`/api/camps/${id}`)).status, 404);
 assert.equal((await request(`/api/camps/${id}`, 'PUT', { title: 'Forgery' }, { Cookie: club.Cookie })).status, 403);
-assert.equal((await request(`/api/camps/${id}`, 'PUT', { status: 'published' }, club)).status, 422);
-const camp = { title: 'SQL smoke published', description: '<p onmouseover="alert(1)">Safe</p>', categories: ['Natur'], min_age: 8, max_age: 16, location_text: 'Zwickau', starts_at: '2035-08-01T10:00', ends_at: '2035-08-08T12:00', registration_deadline: '2035-07-01T12:00', price_eur: 0, status: 'published', place_requests_enabled: true, allocation_method: 'request', capacity_total: 20, places_remaining: 6, waitlist_enabled: true, place_request_email: 'private-booking@example.test' };
+assert.equal((await request(`/api/camps/${id}/submit`, 'POST', {}, club)).status, 422);
+const camp = { title: 'SQL smoke published', description: '<p onmouseover="alert(1)">Safe</p>', categories: ['Natur'], min_age: 8, max_age: 16, location_text: 'Zwickau', starts_at: '2035-08-01T10:00', ends_at: '2035-08-08T12:00', registration_deadline: '2035-07-01T12:00', price_eur: 0, status: 'published', place_requests_enabled: true, allocation_method: 'request', capacity_total: 20, places_remaining: 6, external_occupied: 14, waitlist_enabled: true, place_request_email: 'private-booking@example.test' };
 assert.equal((await request(`/api/camps/${id}`, 'PUT', camp, club)).status, 200);
+const submitted = await request(`/api/camps/${id}/submit`, 'POST', {}, club);
+assert.equal(submitted.status, 200, JSON.stringify(submitted.body));
+assert.equal((await request(`/api/admin/camps/${id}/review`, 'POST', { decision: 'approved', revision_id: submitted.body.revision_id }, admin)).status, 200);
+
 const detail = await request(`/api/camps/${id}`);
 assert.equal(detail.status, 200);
 assert.equal(detail.body.description, '<p>Safe</p>');
@@ -65,10 +78,13 @@ assert.equal(booked.status, 200, JSON.stringify(booked.body));
 const holiday = await request('/api/admin/holidays', 'POST', { name: 'SQL smoke holidays', starts_at: '2035-08-01', ends_at: '2035-08-15' }, admin);
 assert.equal(holiday.status, 200, JSON.stringify(holiday.body));
 assert.ok(Number(holiday.body.id) > 0);
-assert.equal((await request('/api/admin/holidays', 'POST', { name: 'Overlap', starts_at: '2035-08-02', ends_at: '2035-08-08' }, admin)).status, 409);
+const overlap = await request('/api/admin/holidays', 'POST', { name: 'Overlap', starts_at: '2035-08-02', ends_at: '2035-08-08' }, admin);
+assert.equal(overlap.status, 200);
+assert.equal((await request(`/api/admin/holidays/${overlap.body.id}`, 'DELETE', undefined, admin)).status, 200);
 assert.equal((await request(`/api/admin/holidays/${holiday.body.id}`, 'DELETE', undefined, admin)).status, 200);
-assert.equal((await request(`/api/camps/${id}`, 'DELETE', undefined, club)).status, 200);
-assert.equal((await request('/api/camps?all=1', 'GET', undefined, admin)).body.length, before.body.length);
+assert.equal((await request(`/api/camps/${id}`, 'DELETE', undefined, club)).status, 409);
+assert.equal((await request(`/api/camps/${id}`, 'PUT', { ...camp, status: 'archived' }, club)).status, 200);
+assert.equal((await request('/api/camps?all=1', 'GET', undefined, admin)).body.length, before.body.length + 1);
 for (const path of ['/database.sqlite', '/config.local.php', '/error.log', '/schema.sql', '/composer.json', '/vendor/autoload.php', '/tests/sql-smoke.mjs']) {
   assert.ok([403, 404].includes((await request(path)).status), path + ' must not be public');
 }

@@ -4,7 +4,8 @@ import React, { useEffect, useState } from 'react';
 import { Link, useParams, useLocation } from 'react-router-dom';
 import { ArrowLeft, CalendarClock, CalendarDays, Euro, MapPin, Tag, UsersRound } from 'lucide-react';
 import { ImageGallery } from '../components/ImageGallery';
-import { PlaceRequestModal } from '../components/PlaceRequestModal';
+import { ProviderContact } from '../components/ProviderNotice';
+import type { PublicProvider } from '../utils/portal';
 import { availabilityLabel, availabilityTone, placeRequestActionLabel, type AvailabilityState } from '../utils/placeRequests';
 
 interface Holiday {
@@ -18,6 +19,8 @@ interface Camp {
   id: number;
   title: string;
   club_name: string;
+  provider?: PublicProvider;
+  provider_notice?: string;
   min_age: number;
   max_age: number;
   description: string;
@@ -79,7 +82,6 @@ export const CampDetailPage: React.FC = () => {
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [isPlaceRequestOpen, setIsPlaceRequestOpen] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -88,7 +90,7 @@ export const CampDetailPage: React.FC = () => {
       setError('');
       try {
         const [campRes, holidaysRes] = await Promise.all([
-          apiFetch(`/api/camps/${id}`, { signal: controller.signal }),
+          apiFetch(`/api/camps/${id}?public=1`, { signal: controller.signal }),
           apiFetch('/api/holidays', { signal: controller.signal }).catch(() => new Response('[]'))
         ]);
         
@@ -196,14 +198,13 @@ export const CampDetailPage: React.FC = () => {
           <div className="detail-contact">
             <span>Anbieter</span>
             <strong>{camp.club_name}</strong>
-            <p>{camp.contact_info || 'Keine Kontaktinformation hinterlegt.'}</p>
+            {camp.provider ? <ProviderContact provider={camp.provider} /> : <p>{camp.contact_info || 'Keine Kontaktinformation hinterlegt.'}</p>}
             {placeStatus && <span className={`status-pill ${availabilityTone(camp.availability_state)}`} role="status">{placeStatus}</span>}
-            <p>Eine Anfrage ist unverbindlich. Buchung, Bestätigung und Bezahlung erfolgen direkt beim Anbieter.</p>
-            {placeAction && <button className="primary-action detail-request-action" type="button" onClick={() => setIsPlaceRequestOpen(true)}>{placeAction}</button>}
+            <p>Die Anmeldung reserviert vorläufig Plätze. Der Anbieter bestätigt die Teilnahme. Zahlungen werden direkt mit ihm vereinbart und im Portal noch nicht erfasst.</p>
+            {placeAction && <Link className="primary-action detail-request-action" to={`/anmelden/${camp.id}`}>{placeAction}</Link>}
           </div>
         </aside>
       </section>
-      {isPlaceRequestOpen && <PlaceRequestModal camp={camp} onClose={() => setIsPlaceRequestOpen(false)} />}
     </article>
   );
 };

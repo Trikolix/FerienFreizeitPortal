@@ -11,6 +11,8 @@ require_once __DIR__ . '/utils.php';
 require_once __DIR__ . '/security.php';
 require_once __DIR__ . '/validation.php';
 require_once __DIR__ . '/uploads.php';
+require_once __DIR__ . '/portal.php';
+require_once __DIR__ . '/portal_routes.php';
 date_default_timezone_set('Europe/Berlin');
 
 // Unit tests import functions only, without touching the development database.
@@ -40,10 +42,12 @@ if (!in_array($dbConnection, ['sqlite', 'mysql', 'pgsql'], true) || (isProductio
 
 try {
     if ($dbConnection === 'pgsql') {
-        $dsn = "pgsql:host=$dbHost;dbname=$dbName";
+        $dbPort = (int)configValue($localConfig, 'DB_PORT', 5432);
+        $dsn = "pgsql:host=$dbHost;port=$dbPort;dbname=$dbName";
         $db = new PDO($dsn, $dbUser, $dbPass);
     } elseif ($dbConnection === 'mysql') {
-        $dsn = "mysql:host=$dbHost;dbname=$dbName;charset=utf8mb4";
+        $dbPort = (int)configValue($localConfig, 'DB_PORT', 3306);
+        $dsn = "mysql:host=$dbHost;port=$dbPort;dbname=$dbName;charset=utf8mb4";
         $db = new PDO($dsn, $dbUser, $dbPass);
     } else {
         $db = new PDO('sqlite:' . appConfig('DB_SQLITE_PATH', __DIR__ . '/database.sqlite'));
@@ -398,6 +402,9 @@ if (!$db->query('SELECT 1 FROM app_migrations WHERE version = 3')->fetchColumn()
     ensureImageMetadataSchema($db, $dbConnection);
     $db->exec('INSERT INTO app_migrations (version) VALUES (3)');
 }
+if (!$db->query('SELECT 1 FROM app_migrations WHERE version = 4')->fetchColumn()) portalMigrate($db, $dbConnection);
+// The maintenance command uses exactly the same connection/configuration as HTTP.
+if (defined('PORTAL_MAINTENANCE') && PORTAL_MAINTENANCE) return;
 
 // Helper: send JSON response
 function jsonResponse($data, $statusCode = 200) {
@@ -661,7 +668,7 @@ function processContactSubmission($db, $configSource, $data, $server, $mailer = 
 }
 
 function userPayload($user) {
-    return [
+    $payload = [
         'id' => (int)$user['id'],
         'email' => $user['email'] ?? $user['username'],
         'username' => $user['username'],
@@ -670,6 +677,12 @@ function userPayload($user) {
         'club_name' => $user['club_name'] ?? '',
         'contact_info' => $user['contact_info'] ?? '',
     ];
+    if (isset($GLOBALS['db']) && normalizeRole($user['role']) === 'user') {
+        $provider = portalProvider($GLOBALS['db'], (int)$user['id']);
+        $payload['provider_status'] = $provider['status'] ?? 'draft';
+        $payload['provider_id'] = $provider ? (int)$provider['id'] : null;
+    }
+    return $payload;
 }
 
 if (defined("TESTING") && TESTING) { return; }
@@ -810,6 +823,7 @@ function validateCampDates($data) {
 }
 
 try {
+    handlePortalRoutes($db, $requestUri, $requestMethod);
     if ($requestUri === '/api/login' && $requestMethod === 'POST') {
         $data = readJsonBody();
         $username = requireText($data, 'username', 254);
@@ -965,9 +979,9 @@ try {
         $end = requireText($data, 'ends_at', 10);
         if (!$name || !normalizedDate($start . ' 00:00:00') || !normalizedDate($end . ' 23:59:59') || $end < $start) jsonResponse(['error' => 'Bitte Name und gültigen Ferienzeitraum angeben.'], 422);
         beginWrite($db);
-        $overlap = $db->prepare('SELECT COUNT(*) FROM holidays WHERE name = ? OR (DATE(starts_at) <= ? AND DATE(ends_at) >= ?)');
-        $overlap->execute([$name, $end, $start]);
-        if ((int)$overlap->fetchColumn()) { $db->rollBack(); jsonResponse(['error' => 'Diese Ferien überschneiden sich mit einem bestehenden Eintrag oder der Name ist bereits vergeben.'], 409); }
+        $overlap = $db->prepare('SELECT COUNT(*) FROM holidays WHERE name = ? AND starts_at = ? AND ends_at = ?');
+        $overlap->execute([$name, $start . ' 00:00:00', $end . ' 23:59:59']);
+        if ((int)$overlap->fetchColumn()) { $db->rollBack(); jsonResponse(['error' => 'Dieser Zeitraum ist bereits eingetragen.'], 409); }
         $stmt = $db->prepare('INSERT INTO holidays (name, starts_at, ends_at) VALUES (?, ?, ?)');
         $stmt->execute([$name, $start . ' 00:00:00', $end . ' 23:59:59']);
         $holidayId = (int)$db->lastInsertId();
@@ -1090,6 +1104,10 @@ try {
             $copyImages = $db->prepare('INSERT INTO camp_images (camp_id, image_url, alt_text, is_decorative) SELECT ?, image_url, alt_text, is_decorative FROM camp_images WHERE camp_id = ?');
             $copyImages->execute([$newCampId, $sourceCamp['id']]);
 
+            $copyData = campWithRelations($db, portalRow($db, 'SELECT * FROM camps WHERE id = ?', [$newCampId]));
+            $copyData['confirmation_information'] = portalInternalCamp($db, campWithRelations($db, $sourceCamp))['confirmation_information'] ?? '';
+            portalSetDraft($db, (int)$newCampId, $copyData);
+
             $db->commit();
         } catch (Exception $e) {
             if ($db->inTransaction()) {
@@ -1160,9 +1178,9 @@ try {
         if (!$image->fetchColumn()) jsonResponse(['error' => 'Bild nicht gefunden.'], 404);
         try { $metadata = validateImageMetadata(readJsonBody()); }
         catch (InvalidArgumentException $e) { jsonResponse(['error' => $e->getMessage()], 422); }
-        requireImageDescriptions([$metadata], $imageCamp['status']);
         $db->prepare('UPDATE camp_images SET alt_text = ?, is_decorative = ? WHERE id = ? AND camp_id = ?')
             ->execute([$metadata['alt_text'], $metadata['is_decorative'], $matches[2], $matches[1]]);
+        portalInvalidateDraft($db, (int)$matches[1]);
         $db->commit();
         jsonResponse(['message' => 'Bildbeschreibung gespeichert.']);
     }
@@ -1179,9 +1197,9 @@ try {
 
         beginWrite($db);
         $validatedImages = validateUploadedImages($db, $campId);
-        requireImageDescriptions($validatedImages, getCampForUser($db, $campId, $user)['status']);
         $createdPaths = [];
         $savedImages = persistUploadedImages($db, $campId, $validatedImages, $createdPaths);
+        portalInvalidateDraft($db, (int)$campId);
         $db->commit();
         jsonResponse(['message' => 'Bilder gespeichert.', 'images' => $savedImages, 'image_metadata' => campImageMetadata($db, $campId)]);
     }
@@ -1214,6 +1232,7 @@ try {
 
         $deleteStmt = $db->prepare('DELETE FROM camp_images WHERE camp_id = ? AND image_url = ?');
         $deleteStmt->execute([$campId, $imageUrl]);
+        portalInvalidateDraft($db, (int)$campId);
         $db->commit();
         removeUnreferencedImages($db, [$imageUrl]);
 
@@ -1391,10 +1410,12 @@ try {
         }
 
         $viewer = authenticateUser($db);
-        $canManage = $viewer && (isAdminRole($viewer) || (int)$viewer['id'] === (int)$camp['club_id']);
-        if ((!campIsPublic($camp) || !(int)$camp['owner_active']) && !$canManage) jsonResponse(['error' => 'Freizeit nicht gefunden.'], 404);
+        $canManage = $viewer && (isAdminRole($viewer) || (int)$viewer['id'] === (int)$camp['club_id']) && ($_GET['public'] ?? '') !== '1';
+        $provider = portalProvider($db, (int)$camp['club_id']);
+        if ((!campIsPublic($camp) || !(int)$camp['owner_active'] || !$provider || $provider['status'] !== 'approved') && !$canManage) jsonResponse(['error' => 'Freizeit nicht gefunden.'], 404);
+        if ($canManage && !isAdminRole($viewer) && (!$provider || $provider['status'] !== 'approved')) jsonResponse(['error' => 'Bitte zuerst das Trägerprofil freigeben lassen.'], 403);
         $result = campWithRelations($db, $camp);
-        jsonResponse($canManage ? $result : publicCampPayload($result));
+        jsonResponse($canManage ? portalInternalCamp($db, $result) : publicCampPayload(portalPublicCamp($db, $result)));
     }
     elseif ($requestUri === '/api/camps' && $requestMethod === 'GET') {
         $query = 'SELECT c.*, u.club_name, u.contact_info, u.username FROM camps c JOIN users u ON c.club_id = u.id';
@@ -1404,7 +1425,14 @@ try {
         foreach ($_GET as $value) if (!is_string($value) || strlen($value) > 1000) jsonResponse(['error' => 'Ungültiger Suchfilter.'], 400);
         if ((isset($_GET['manage']) || isset($_GET['all'])) && !$currentUser) jsonResponse(['error' => 'Bitte melde dich erneut an.'], 401);
         $internalView = $currentUser && ((isset($_GET['all']) && $_GET['all'] === '1' && isAdminRole($currentUser)) || (isset($_GET['club_id']) && ((int)$_GET['club_id'] === (int)$currentUser['id'] || isAdminRole($currentUser))));
-        if (!$internalView) $whereConditions[] = 'u.is_active = 1';
+        if (!$internalView) {
+            $whereConditions[] = 'u.is_active = 1';
+            $whereConditions[] = "EXISTS (SELECT 1 FROM providers p WHERE p.user_id = c.club_id AND p.status = 'approved')";
+            $whereConditions[] = 'EXISTS (SELECT 1 FROM camp_portal_state ps WHERE ps.camp_id = c.id AND ps.approved_revision_id IS NOT NULL)';
+        } elseif (!isAdminRole($currentUser)) {
+            $provider = portalProvider($db, (int)$currentUser['id']);
+            if (!$provider || $provider['status'] !== 'approved') jsonResponse(['error' => 'Bitte zuerst das Trägerprofil freigeben lassen.'], 403);
+        }
 
         if (isset($_GET['club_id'])) {
             $clubId = (int)$_GET['club_id'];
@@ -1456,6 +1484,11 @@ try {
             $params[] = $_GET['end_date'];
         }
 
+        if (!empty($_GET['location'])) {
+            $whereConditions[] = 'LOWER(c.location_text) LIKE LOWER(?)';
+            $params[] = '%' . str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $_GET['location']) . '%';
+            $whereConditions[count($whereConditions) - 1] .= " ESCAPE '!'";
+        }
         if (isset($_GET['minLat']) && isset($_GET['maxLat']) && isset($_GET['minLng']) && isset($_GET['maxLng'])) {
             $whereConditions[] = '(c.location_lat BETWEEN ? AND ? AND c.location_lng BETWEEN ? AND ?)';
             $params[] = (float)$_GET['minLat'];
@@ -1506,11 +1539,14 @@ try {
             unset($camp);
         }
 
-        jsonResponse($internalView ? $camps : array_map('publicCampPayload', $camps));
+        jsonResponse(array_map(fn($camp) => $internalView ? portalInternalCamp($db, $camp) : publicCampPayload(portalPublicCamp($db, $camp)), $camps));
     }
     else {
         jsonResponse(['error' => 'Not Found'], 404);
     }
+} catch (PortalError $e) {
+    if ($db->inTransaction()) $db->rollBack();
+    jsonResponse(['error' => $e->getMessage(), 'fields' => $e->fields], $e->status);
 } catch (Throwable $e) {
     if ($db->inTransaction()) $db->rollBack();
     foreach ($createdPaths ?? [] as $path) if (is_file($path)) unlink($path);

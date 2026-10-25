@@ -63,6 +63,8 @@ export function Layout() {
         {user && <nav id="main-navigation" className={`main-nav ${isMenuOpen ? 'is-open' : ''}`} aria-label="Kontomenü" onBlur={event => { if (event.relatedTarget && !menu.current?.contains(event.relatedTarget as Node)) setIsMenuOpen(false); }}>
           <div className="menu-account-info"><span>Eingeloggt als</span><strong>{user.club_name || user.display_name || user.email}</strong></div>
           <ul><li><NavLink to={isAdmin ? '/admin' : '/dashboard'} onClick={() => setIsMenuOpen(false)}>{isAdmin ? <Shield size={18} aria-hidden="true" /> : <UserRoundCog size={18} aria-hidden="true" />}{isAdmin ? 'Verwaltung' : 'Meine Freizeiten'}</NavLink></li>
+            <li><NavLink to={isAdmin ? '/pruefung' : '/traegerprofil'} onClick={() => setIsMenuOpen(false)}>{isAdmin ? 'Prüfungen & Anbieterexport' : 'Trägerprofil & Stammdaten'}</NavLink></li>
+            {!isAdmin && user.provider_status === 'approved' && <li><NavLink to="/buchungen" onClick={() => setIsMenuOpen(false)}>Anmeldungen & Wartelisten</NavLink></li>}
             <li><NavLink to="/einstellungen" onClick={() => setIsMenuOpen(false)}><UserRoundCog size={18} aria-hidden="true" />Konto &amp; Einstellungen</NavLink></li></ul>
           <div className="menu-divider" />
           <button type="button" className="menu-logout" disabled={loggingOut} onClick={async () => {

@@ -1,9 +1,9 @@
 FROM php:8.3-apache
 
 # Install PDO extensions for MySQL/PostgreSQL
-RUN apt-get update && apt-get install -y libpq-dev libsqlite3-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libonig-dev \
+RUN apt-get update && apt-get install -y libpq-dev libsqlite3-dev libpng-dev libjpeg62-turbo-dev libwebp-dev libonig-dev libzip-dev \
     && docker-php-ext-configure gd --with-jpeg --with-webp \
-    && docker-php-ext-install pdo pdo_mysql pdo_pgsql pdo_sqlite gd mbstring
+    && docker-php-ext-install pdo pdo_mysql pdo_pgsql pdo_sqlite gd mbstring zip
 COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 
 # Enable Apache mod_rewrite

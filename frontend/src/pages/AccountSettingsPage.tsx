@@ -3,7 +3,7 @@ import { useAction } from '../utils/useAction';
 import { apiFetch } from '../utils/api';
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { KeyRound, PencilLine, Save, ShieldCheck } from 'lucide-react';
+import { KeyRound, ShieldCheck } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 
 const getRoleLabel = (role?: string) => {
@@ -13,11 +13,9 @@ const getRoleLabel = (role?: string) => {
 };
 
 export const AccountSettingsPage: React.FC = () => {
-  const { user, updateUser, logout } = useAuthStore();
+  const { user, logout } = useAuthStore();
   const navigate = useNavigate();
-  const [displayName, setDisplayName] = useState(user?.display_name || user?.club_name || '');
-  const [contactInfo, setContactInfo] = useState(user?.contact_info || '');
-  const [message, setMessage] = useState('');
+  const [message] = useState('');
   const [error, setError] = useState('');
   const { busy, runAction } = useAction(setError);
   const [isPasswordFormOpen, setIsPasswordFormOpen] = useState(false);
@@ -32,31 +30,6 @@ export const AccountSettingsPage: React.FC = () => {
     }
   }, [user, navigate]);
 
-  const handleProfileSubmit = (event: React.FormEvent) => runAction(async () => {
-    event.preventDefault();
-    setError('');
-    setMessage('');
-
-    try {
-      const response = await apiFetch('/api/me', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-
-        },
-        body: JSON.stringify({ display_name: displayName, contact_info: contactInfo }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setError(data.error || 'Öffentliche Angaben konnten nicht gespeichert werden');
-        return;
-      }
-      updateUser(data);
-      setMessage('Öffentliche Vereinsangaben gespeichert.');
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Anfrage fehlgeschlagen.');
-    }
-  });
 
   const handlePasswordSubmit = (event: React.FormEvent) => runAction(async () => {
     event.preventDefault();
@@ -115,35 +88,8 @@ export const AccountSettingsPage: React.FC = () => {
         </dl>
       </section>
 
-      <section className="form-panel public-profile-panel" aria-labelledby="public-profile-title">
-        <div className="settings-section-heading">
-          <PencilLine size={22} />
-          <div>
-            <h2 id="public-profile-title">Öffentliches Vereinsprofil</h2>
-            <p>Diese Angaben sehen Interessenten bei deinen veröffentlichten Freizeiten.</p>
-          </div>
-        </div>
-        {error && <p className="alert" role="alert">{error}</p>}
-        {message && <p className="success-alert" role="status">{message}</p>}
-        <div className="public-profile-layout">
-          <AccessibleForm className="settings-form" onSubmit={handleProfileSubmit}>
-            <label className="field">
-              <span>Name des Vereins / Anbieters</span>
-              <input type="text" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
-            </label>
-            <label className="field">
-              <span>Kontakt für Rückfragen</span>
-              <textarea value={contactInfo} onChange={(event) => setContactInfo(event.target.value)} placeholder="z. B. E-Mail-Adresse, Telefonnummer und Ansprechperson" />
-            </label>
-            <button className="primary-action" type="submit" disabled={busy}><Save size={18} /> Öffentliche Angaben speichern</button>
-          </AccessibleForm>
-          <aside className="public-profile-preview" aria-label="Vorschau der öffentlichen Angaben">
-            <span>So sehen Familien dein Angebot</span>
-            <strong>{displayName || 'Name des Vereins'}</strong>
-            <p>{contactInfo || 'Kontaktinformationen erscheinen hier.'}</p>
-          </aside>
-        </div>
-      </section>
+      {user?.role === 'user' && <section className="form-panel public-profile-panel" aria-labelledby="public-profile-title"><h2 id="public-profile-title">Trägerprofil und Stammdaten</h2><p>Öffentliche Anbieterangaben und geschützte Organisationsdaten werden gemeinsam im geprüften Trägerprofil gepflegt.</p><Link className="secondary-action" to="/traegerprofil">Trägerprofil bearbeiten</Link></section>}
+      {error && <p className="alert" role="alert">{error}</p>}{message && <p className="success-alert" role="status">{message}</p>}
 
       <section className="security-panel" aria-labelledby="security-title">
         <div className="settings-section-heading">
