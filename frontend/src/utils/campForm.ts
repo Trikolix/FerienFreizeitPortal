@@ -1,4 +1,4 @@
-export const editorSections = ['basics', 'schedule', 'places', 'location', 'images'] as const;
+export const editorSections = ['basics', 'schedule', 'places', 'location', 'images', 'legal'] as const;
 export type EditorSection = typeof editorSections[number];
 export const fieldSection: Record<string, EditorSection> = {
   images: 'images',
@@ -7,8 +7,47 @@ export const fieldSection: Record<string, EditorSection> = {
   place_requests_enabled: 'places', allocation_method: 'places', capacity_total: 'places', places_remaining: 'places',
   request_opens_at: 'places', waitlist_enabled: 'places', place_request_email: 'places', confirmation_information: 'places',
   location_text: 'location', location_lat: 'location', location_lng: 'location', contact_info: 'location',
+  legal_and_requirements: 'legal',
 };
-type CampInput = { title?: string; categories?: string[]; description?: string; min_age?: number; max_age?: number; starts_at?: string; ends_at?: string; registration_deadline?: string; price_eur?: number; location_text?: string; place_requests_enabled?: boolean; allocation_method?: 'request' | 'lottery'; capacity_total?: number; places_remaining?: number; request_opens_at?: string; place_request_email?: string };
+
+type CampInput = {
+  title?: string;
+  categories?: string[];
+  description?: string;
+  min_age?: number;
+  max_age?: number;
+  starts_at?: string;
+  ends_at?: string;
+  registration_deadline?: string;
+  price_eur?: number;
+  location_text?: string;
+  place_requests_enabled?: boolean;
+  allocation_method?: 'request' | 'lottery';
+  capacity_total?: number;
+  places_remaining?: number;
+  request_opens_at?: string;
+  place_request_email?: string;
+  confirmation_information?: string;
+  legal_and_requirements?: string;
+};
+
+const normDate = (value?: string) => value ? value.replace('T', ' ').slice(0, 16) : '';
+const normText = (value?: string) => (value ?? '').trim();
+
+export function campChangeRequiresReview(original: CampInput, current: CampInput): boolean {
+  if (normText(original.title) !== normText(current.title)) return true;
+  if (normText(original.location_text) !== normText(current.location_text)) return true;
+  if (normText(original.legal_and_requirements) !== normText(current.legal_and_requirements)) return true;
+  if (normText(original.confirmation_information) !== normText(current.confirmation_information)) return true;
+  if (normDate(original.starts_at) !== normDate(current.starts_at)) return true;
+  if (normDate(original.ends_at) !== normDate(current.ends_at)) return true;
+  if (normDate(original.registration_deadline) !== normDate(current.registration_deadline)) return true;
+  if ((original.min_age ?? null) !== (current.min_age ?? null)) return true;
+  if ((original.max_age ?? null) !== (current.max_age ?? null)) return true;
+  if (Number(original.price_eur ?? NaN) !== Number(current.price_eur ?? NaN)) return true;
+  return false;
+}
+
 export function publicationIssues(camp: CampInput, contactInfo?: string, accountEmail?: string): Record<string, string> {
   const errors: Record<string, string> = {};
   if (!camp.title?.trim()) errors.title = 'Bitte einen Titel eingeben.';

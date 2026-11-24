@@ -24,12 +24,26 @@ import { BookingManagementPage } from './pages/BookingManagementPage';
 import { PortalAdminPage } from './pages/PortalAdminPage';
 
 const ClubDashboard = lazy(() => import('./pages/ClubDashboard').then((m) => ({ default: m.ClubDashboard })));
+const ClubCampDetailPage = lazy(() => import('./pages/ClubCampDetailPage').then((m) => ({ default: m.ClubCampDetailPage })));
+const ClubCampEditorPage = lazy(() => import('./pages/ClubCampEditorPage').then((m) => ({ default: m.ClubCampEditorPage })));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard').then((m) => ({ default: m.AdminDashboard })));
+const AdminClubsPage = lazy(() => import('./pages/AdminClubsPage').then((m) => ({ default: m.AdminClubsPage })));
+const AdminCampsPage = lazy(() => import('./pages/AdminCampsPage').then((m) => ({ default: m.AdminCampsPage })));
+const AdminCampEditorPage = lazy(() => import('./pages/AdminCampsPage').then((m) => ({ default: m.AdminCampEditorPage })));
+const AdminHolidaysPage = lazy(() => import('./pages/AdminHolidaysPage').then((m) => ({ default: m.AdminHolidaysPage })));
+const AdminReportsPage = lazy(() => import('./pages/AdminReportsPage').then((m) => ({ default: m.AdminReportsPage })));
 
 function ApprovedProviderRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore(state => state.user);
   if (!user) return <Navigate to="/login" replace />;
   if (user.role === 'user' && user.provider_status !== 'approved') return <Navigate to="/traegerprofil" replace />;
+  return children;
+}
+
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const user = useAuthStore(state => state.user);
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role === 'user') return <Navigate to="/dashboard" replace />;
   return children;
 }
 
@@ -62,12 +76,22 @@ export const App: React.FC = () => {
           <Route path="anmelden/:campId" element={<BookingPage />} />
           <Route path="buchung" element={<BookingStatusPage />} />
           <Route path="buchungen" element={<ApprovedProviderRoute><BookingManagementPage /></ApprovedProviderRoute>} />
+          <Route path="dashboard" element={<ApprovedProviderRoute><ClubDashboard /></ApprovedProviderRoute>} />
+          <Route path="dashboard/freizeiten/neu" element={<ApprovedProviderRoute><ClubCampEditorPage mode="create" /></ApprovedProviderRoute>} />
+          <Route path="dashboard/freizeiten/:id" element={<ApprovedProviderRoute><ClubCampDetailPage /></ApprovedProviderRoute>} />
+          <Route path="dashboard/freizeiten/:id/bearbeiten" element={<ApprovedProviderRoute><ClubCampEditorPage mode="edit" /></ApprovedProviderRoute>} />
+          <Route path="dashboard/freizeiten/:id/buchungen" element={<ApprovedProviderRoute><BookingManagementPage /></ApprovedProviderRoute>} />
+          <Route path="admin" element={<AdminRoute><AdminDashboard /></AdminRoute>} />
+          <Route path="admin/pruefungen" element={<AdminRoute><PortalAdminPage /></AdminRoute>} />
+          <Route path="admin/vereine" element={<AdminRoute><AdminClubsPage /></AdminRoute>} />
+          <Route path="admin/freizeiten" element={<AdminRoute><AdminCampsPage /></AdminRoute>} />
+          <Route path="admin/freizeiten/:id/bearbeiten" element={<AdminRoute><AdminCampEditorPage /></AdminRoute>} />
+          <Route path="admin/ferien" element={<AdminRoute><AdminHolidaysPage /></AdminRoute>} />
+          <Route path="admin/auswertung" element={<AdminRoute><AdminReportsPage /></AdminRoute>} />
           <Route path="pruefung" element={<PortalAdminPage />} />
           <Route path="passwort-vergessen" element={<ForgotPasswordPage />} />
           <Route path="passwort-setzen" element={<SetPasswordPage />} />
           <Route path="kontakt" element={<ContactPage />} />
-          <Route path="dashboard" element={<ApprovedProviderRoute><ClubDashboard /></ApprovedProviderRoute>} />
-          <Route path="admin" element={<AdminDashboard />} />
           <Route path="einstellungen" element={<AccountSettingsPage />} />
           <Route path="impressum" element={<Impressum />} />
           <Route path="datenschutz" element={<DatenschutzPage />} />

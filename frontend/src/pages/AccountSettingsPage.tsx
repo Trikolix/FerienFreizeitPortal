@@ -4,6 +4,7 @@ import { apiFetch } from '../utils/api';
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { KeyRound, ShieldCheck } from 'lucide-react';
+import { AdminWorkspaceShell, ProviderWorkspaceShell } from '../components/WorkspaceShell';
 import { useAuthStore } from '../store/authStore';
 
 const getRoleLabel = (role?: string) => {
@@ -66,7 +67,7 @@ export const AccountSettingsPage: React.FC = () => {
     }
   });
 
-  return (
+  const content = (
     <div className="settings-page">
       <section className="page-heading">
         <span className="eyebrow">Konto</span>
@@ -76,7 +77,7 @@ export const AccountSettingsPage: React.FC = () => {
 
       <section className="account-info-panel" aria-labelledby="account-info-title">
         <div className="settings-section-heading">
-          <ShieldCheck size={22} />
+          <ShieldCheck size={22} aria-hidden="true" />
           <div>
             <h2 id="account-info-title">Kontoinformationen</h2>
             <p>Diese Angaben werden vom Jugendring verwaltet und können hier nicht geändert werden.</p>
@@ -93,14 +94,14 @@ export const AccountSettingsPage: React.FC = () => {
 
       <section className="security-panel" aria-labelledby="security-title">
         <div className="settings-section-heading">
-          <KeyRound size={22} />
+          <KeyRound size={22} aria-hidden="true" />
           <div>
             <h2 id="security-title">Sicherheit</h2>
             <p>Hier kannst du dein Passwort ändern. Zur Bestätigung benötigst du dein aktuelles Passwort.</p>
           </div>
         </div>
         {!isPasswordFormOpen ? (
-          <button className="secondary-action" type="button" onClick={() => setIsPasswordFormOpen(true)}><KeyRound size={18} /> Passwort ändern</button>
+          <button className="secondary-action" type="button" onClick={() => setIsPasswordFormOpen(true)}><KeyRound size={18} aria-hidden="true" /> Passwort ändern</button>
         ) : (
           <AccessibleForm className="password-change-form" onSubmit={handlePasswordSubmit}>
             {passwordError && <p className="alert" role="alert">{passwordError}</p>}
@@ -126,4 +127,8 @@ export const AccountSettingsPage: React.FC = () => {
       </section>
     </div>
   );
+
+  if (user?.role === 'admin' || user?.role === 'master_admin') return <AdminWorkspaceShell>{content}</AdminWorkspaceShell>;
+  if (user?.role === 'user') return <ProviderWorkspaceShell>{content}</ProviderWorkspaceShell>;
+  return content;
 };
