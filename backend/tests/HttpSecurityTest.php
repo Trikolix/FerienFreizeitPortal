@@ -295,6 +295,27 @@ final class HttpSecurityTest extends TestCase {
         self::assertSame(401, $this->request('/api/me', 'GET', null, $this->club)['status']);
     }
 
+    public function testPublicSearchExcludesPastCampsAndIncludesOngoingAndUpcoming(): void {
+        $public = $this->request('/api/camps');
+        self::assertSame(200, $public['status']);
+        $publicByTitle = [];
+        foreach ($public['body'] as $item) $publicByTitle[$item['title']] = $item;
+        self::assertArrayNotHasKey('Demo: Flötencamp – vergangen', $publicByTitle);
+        self::assertArrayHasKey('Demo: Sommercamp – läuft gerade', $publicByTitle);
+        self::assertArrayHasKey('Demo: Waldcamp – demnächst', $publicByTitle);
+        self::assertSame('ongoing', $publicByTitle['Demo: Sommercamp – läuft gerade']['lifecycle_state']);
+        self::assertSame('upcoming', $publicByTitle['Demo: Waldcamp – demnächst']['lifecycle_state']);
+
+        $clubId = $this->club['user']['id'];
+        $managed = $this->request("/api/camps?manage=1&club_id=$clubId", 'GET', null, $this->club);
+        self::assertSame(200, $managed['status']);
+        $managedByTitle = [];
+        foreach ($managed['body'] as $item) $managedByTitle[$item['title']] = $item;
+        self::assertSame('past', $managedByTitle['Demo: Flötencamp – vergangen']['lifecycle_state']);
+        self::assertSame('ongoing', $managedByTitle['Demo: Sommercamp – läuft gerade']['lifecycle_state']);
+        self::assertSame('upcoming', $managedByTitle['Demo: Waldcamp – demnächst']['lifecycle_state']);
+    }
+
     public static function tearDownAfterClass(): void {
         if (is_resource(self::$process)) { proc_terminate(self::$process); proc_close(self::$process); }
         // Only remove the random temporary directory created by this test suite.

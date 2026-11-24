@@ -275,6 +275,53 @@ function ensureDemoCamps($db) {
     }
 }
 
+function ensureDemoPortalApproval(PDO $db): void {
+    $admin = portalRow($db, "SELECT * FROM users WHERE role = 'master_admin' ORDER BY id LIMIT 1");
+    $club = portalRow($db, "SELECT * FROM users WHERE username = 'testverein'");
+    if (!$admin || !$club) return;
+
+    $provider = portalEnsureProvider($db, $club);
+    if ($provider['status'] !== 'approved' || !(int)$provider['email_verified']) {
+        $clubName = $club['club_name'] ?: 'Testverein Westsachsen';
+        $profile = portalProfile([
+            'public_name' => $clubName,
+            'legal_name' => $clubName . ' e. V.',
+            'legal_form' => 'eingetragener Verein',
+            'street' => 'Teststraße 1',
+            'postal_code' => '08056',
+            'city' => 'Zwickau',
+            'country' => 'DE',
+            'contact_info' => $club['contact_info'] ?: $club['email'],
+            'tax_ids' => [['country' => 'DE', 'number' => '000123456']],
+            'register_type' => 'Vereinsregister',
+            'register_number' => 'VR 001',
+            'residence_countries' => ['DE'],
+        ], true);
+        portalExec($db, "UPDATE providers SET status = 'approved', email_verified = 1, profile_data = ?, updated_at = ? WHERE id = ?", [portalJson($profile), portalNow(), $provider['id']]);
+        portalProviderHistory($db, portalProvider($db, (int)$club['id']), 'approved', (int)$admin['id']);
+    }
+
+    ensureDemoCamps($db);
+
+    $externalByTitle = [
+        'Demo: Flötencamp – vergangen' => 14,
+        'Demo: Sommercamp – läuft gerade' => 16,
+        'Demo: Waldcamp – demnächst' => 0,
+    ];
+    foreach ($externalByTitle as $title => $external) {
+        $camp = portalRow($db, 'SELECT * FROM camps WHERE club_id = ? AND title = ?', [$club['id'], $title]);
+        if (!$camp) continue;
+        $campId = (int)$camp['id'];
+        portalExec($db, "UPDATE camps SET place_requests_enabled = 1, allocation_method = 'request', capacity_total = 20, waitlist_enabled = 1, status = 'published' WHERE id = ?", [$campId]);
+        portalEnsureCampState($db, portalRow($db, 'SELECT * FROM camps WHERE id = ?', [$campId]));
+        portalExec($db, 'UPDATE camp_portal_state SET external_occupied = ? WHERE camp_id = ?', [$external, $campId]);
+        portalRefreshCapacity($db, $campId);
+        $fresh = campWithRelations($db, portalRow($db, 'SELECT * FROM camps WHERE id = ?', [$campId]));
+        $revId = portalCreateApprovedRevision($db, $campId, $fresh, (int)$club['id'], 'Demo-Freigabe', (int)$admin['id']);
+        portalMarkApprovedRevision($db, $campId, $fresh, $revId);
+    }
+}
+
 try {
     if (!isProduction() && filter_var(appConfig('SEED_DEMO_DATA', $dbConnection === 'sqlite'), FILTER_VALIDATE_BOOLEAN)) {
         ensureDefaultUser($db, 'admin@example.test', 'admin', 'admin', 'master_admin', 'Master-Admin');
@@ -402,7 +449,11 @@ if (!$db->query('SELECT 1 FROM app_migrations WHERE version = 3')->fetchColumn()
     ensureImageMetadataSchema($db, $dbConnection);
     $db->exec('INSERT INTO app_migrations (version) VALUES (3)');
 }
-if (!$db->query('SELECT 1 FROM app_migrations WHERE version = 4')->fetchColumn()) portalMigrate($db, $dbConnection);
+if (!$db->query('SELECT 1 FROM app_migrations WHERE version = 4')->fetchColumn()) {
+    portalMigrate($db, $dbConnection);
+    $seedDemoData = configValue($localConfig, 'SEED_DEMO_DATA', $dbConnection === 'sqlite' ? '1' : '0');
+    if (!isProduction() && filter_var($seedDemoData, FILTER_VALIDATE_BOOLEAN)) ensureDemoPortalApproval($db);
+}
 // The maintenance command uses exactly the same connection/configuration as HTTP.
 if (defined('PORTAL_MAINTENANCE') && PORTAL_MAINTENANCE) return;
 

@@ -636,6 +636,9 @@ export const SearchPage: React.FC = () => {
                         {camp.categories?.map(cat => (
                           <span key={cat} className="camp-type">{cat}</span>
                         )) || <span className="camp-type">{camp.type}</span>}
+                        {camp.lifecycle_state === 'ongoing' && (
+                          <span className="status-pill is-ongoing badge-pill">Läuft gerade</span>
+                        )}
                         {holiday && (
                           <span className="status-pill is-live badge-pill">
                             <CalendarDays size={14} aria-hidden="true" /> {holiday.name}
