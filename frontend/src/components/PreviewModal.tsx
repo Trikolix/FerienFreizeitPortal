@@ -15,6 +15,7 @@ interface PreviewModalProps {
     min_age: number;
     max_age: number;
     description: string;
+    legal_and_requirements: string;
     type: string;
     categories: string[];
     location_text: string;
@@ -86,6 +87,12 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubN
               <h1>{camp.title || 'Titel der Freizeit'}</h1>
               <p className="provider">{clubName}</p>
               <div className="detail-description" dangerouslySetInnerHTML={{ __html: safeHtml(camp.description || 'Keine Beschreibung hinterlegt.') }} />
+              {camp.legal_and_requirements && (
+                <section className="detail-legal-box">
+                  <h2>Rechtliches &amp; Teilnahmebedingungen</h2>
+                  <p className="preserve-lines">{camp.legal_and_requirements}</p>
+                </section>
+              )}
             </div>
 
             <aside className="detail-sidebar" aria-label="Freizeitdetails">
@@ -145,7 +152,7 @@ export const PreviewModal: React.FC<PreviewModalProps> = ({ camp, onClose, clubN
                 <strong>{clubName}</strong>
                 <p>{contactInfo || 'Keine Kontaktinformation hinterlegt.'}</p>
                 {placeStatus && <span className={`status-pill ${availabilityTone(availabilityState)}`}>{placeStatus}</span>}
-                <p>Eine Anfrage ist unverbindlich. Buchung, Bestätigung und Bezahlung erfolgen direkt beim Anbieter.</p>
+                <p>Die Anmeldung reserviert vorläufig Plätze. Der Anbieter bestätigt die Teilnahme. Zahlungen werden außerhalb des Portals abgewickelt und hier noch nicht erfasst.</p>
               </div>
             </aside>
           </section>

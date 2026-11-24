@@ -2,7 +2,7 @@ import { safeHtml } from '../utils/safeHtml';
 import { apiFetch } from '../utils/api';
 import React, { useEffect, useState } from 'react';
 import { Link, useParams, useLocation } from 'react-router-dom';
-import { ArrowLeft, CalendarClock, CalendarDays, Euro, MapPin, Tag, UsersRound } from 'lucide-react';
+import { ArrowLeft, CalendarClock, CalendarDays, MapPin, Tag, UsersRound } from 'lucide-react';
 import { ImageGallery } from '../components/ImageGallery';
 import { ProviderContact } from '../components/ProviderNotice';
 import type { PublicProvider } from '../utils/portal';
@@ -24,6 +24,7 @@ interface Camp {
   min_age: number;
   max_age: number;
   description: string;
+  legal_and_requirements?: string;
   type: string;
   categories?: string[];
   location_text: string;
@@ -93,13 +94,13 @@ export const CampDetailPage: React.FC = () => {
           apiFetch(`/api/camps/${id}?public=1`, { signal: controller.signal }),
           apiFetch('/api/holidays', { signal: controller.signal }).catch(() => new Response('[]'))
         ]);
-        
+
         if (!campRes.ok) throw new Error('Freizeit nicht gefunden');
         const campData = await campRes.json();
         const holidaysData = await holidaysRes.json();
-        
+
         setCamp(campData);
-        setHolidays(holidaysData);
+        setHolidays(Array.isArray(holidaysData) ? holidaysData : []);
       } catch (err) {
         if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Fehler beim Laden');
       } finally {
@@ -111,7 +112,7 @@ export const CampDetailPage: React.FC = () => {
   }, [id]);
 
   if (loading) return <div className="empty-state"><p role="status">Freizeit wird geladen …</p></div>;
-  if (error || !camp) return <div className="empty-state"><h1>Freizeit nicht verfügbar</h1><p role="alert">{error || 'Freizeit nicht gefunden'}</p><Link to="/">Zurück zur Suche</Link></div>;
+  if (error || !camp) return <div className="empty-state"><h1>Freizeit nicht verfügbar</h1><p role="alert">{error || 'Freizeit nicht gefunden'}</p><Link className="secondary-action" to="/">Zurück zur Suche</Link></div>;
 
   const holiday = getHolidayForCamp(camp, holidays);
   const placeStatus = availabilityLabel(camp);
@@ -120,7 +121,7 @@ export const CampDetailPage: React.FC = () => {
   return (
     <article className="camp-detail-page">
       <Link className="secondary-action detail-back-link" to={returnSearch ? `/?${returnSearch}` : '/'}>
-        <ArrowLeft size={17} />
+        <ArrowLeft size={17} aria-hidden="true" />
         Zur Suche
       </Link>
 
@@ -136,72 +137,82 @@ export const CampDetailPage: React.FC = () => {
             )) || <span className="camp-type">{camp.type}</span>}
             {holiday && (
               <span className="status-pill is-live">
-                <CalendarDays size={14} /> {holiday.name}
+                <CalendarDays size={14} aria-hidden="true" /> {holiday.name}
               </span>
             )}
           </div>
           <h1>{camp.title}</h1>
           <p className="provider">{camp.club_name}</p>
           <div className="detail-description" dangerouslySetInnerHTML={{ __html: safeHtml(camp.description) }} />
+          {camp.legal_and_requirements && (
+            <section className="detail-legal-box" aria-labelledby="detail-legal-heading">
+              <h2 id="detail-legal-heading">Rechtliches &amp; Teilnahmebedingungen</h2>
+              <p className="preserve-lines">{camp.legal_and_requirements}</p>
+            </section>
+          )}
         </div>
 
         <aside className="detail-sidebar" aria-label="Freizeitdetails">
+          <div className="detail-cta-card">
+            <div className="detail-cta-price">
+              <span>Teilnahmebeitrag</span>
+              <strong>{formatPrice(camp.price_eur)}</strong>
+            </div>
+            {placeStatus && <span className={`status-pill ${availabilityTone(camp.availability_state)}`} role="status">{placeStatus}</span>}
+            {placeAction && <Link className="primary-action detail-request-action" to={`/anmelden/${camp.id}`}>{placeAction}</Link>}
+            <ol className="booking-steps-hint">
+              <li>Direkt ohne Familienkonto anmelden.</li>
+              <li>Plätze werden vorläufig reserviert, bis der Anbieter bestätigt.</li>
+              <li>Zahlung erfolgt außerhalb des Portals.</li>
+            </ol>
+          </div>
+
           <div className="detail-fact">
-            <CalendarDays size={20} />
+            <CalendarDays size={20} aria-hidden="true" />
             <div>
               <span>Beginn</span>
               <strong>{formatDateTime(camp.starts_at)}</strong>
             </div>
           </div>
           <div className="detail-fact">
-            <CalendarClock size={20} />
+            <CalendarClock size={20} aria-hidden="true" />
             <div>
               <span>Ende</span>
               <strong>{formatDateTime(camp.ends_at)}</strong>
             </div>
           </div>
           <div className="detail-fact">
-            <UsersRound size={20} />
+            <UsersRound size={20} aria-hidden="true" />
             <div>
               <span>Alter</span>
               <strong>{camp.min_age}-{camp.max_age} Jahre</strong>
             </div>
           </div>
           <div className="detail-fact">
-            <Euro size={20} />
-            <div>
-              <span>Teilnahmebeitrag</span>
-              <strong>{formatPrice(camp.price_eur)}</strong>
-            </div>
-          </div>
-          <div className="detail-fact">
-            <CalendarClock size={20} />
+            <CalendarClock size={20} aria-hidden="true" />
             <div>
               <span>Anmeldeschluss</span>
               <strong>{formatDateTime(camp.registration_deadline)}</strong>
             </div>
           </div>
           <div className="detail-fact">
-            <Tag size={20} />
+            <Tag size={20} aria-hidden="true" />
             <div>
               <span>Kategorien</span>
               <strong>{camp.categories?.join(', ') || camp.type || 'Nicht angegeben'}</strong>
             </div>
           </div>
           <div className="detail-fact">
-            <MapPin size={20} />
+            <MapPin size={20} aria-hidden="true" />
             <div>
               <span>Ort</span>
               <strong>{camp.location_text || 'Nicht angegeben'}</strong>
             </div>
           </div>
           <div className="detail-contact">
-            <span>Anbieter</span>
+            <span>Veranstalter &amp; Kontakt</span>
             <strong>{camp.club_name}</strong>
             {camp.provider ? <ProviderContact provider={camp.provider} /> : <p>{camp.contact_info || 'Keine Kontaktinformation hinterlegt.'}</p>}
-            {placeStatus && <span className={`status-pill ${availabilityTone(camp.availability_state)}`} role="status">{placeStatus}</span>}
-            <p>Die Anmeldung reserviert vorläufig Plätze. Der Anbieter bestätigt die Teilnahme. Zahlungen werden direkt mit ihm vereinbart und im Portal noch nicht erfasst.</p>
-            {placeAction && <Link className="primary-action detail-request-action" to={`/anmelden/${camp.id}`}>{placeAction}</Link>}
           </div>
         </aside>
       </section>

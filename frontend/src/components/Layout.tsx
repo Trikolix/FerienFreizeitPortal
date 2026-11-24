@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Outlet, Link, NavLink, useLocation } from 'react-router-dom';
-import { LogOut, Menu, Shield, UserRoundCog, X } from 'lucide-react';
+import { Building2, CalendarCheck, CalendarDays, ClipboardCheck, Compass, FileSpreadsheet, LayoutDashboard, LogOut, Menu, Shield, ShieldCheck, UserRoundCog, X } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import logoJugendring from '../assets/logo_jugendring_westsachsen.svg';
 
@@ -57,15 +57,40 @@ export function Layout() {
           <span className="brand-copy"><span className="brand-heading">Ferienfreizeiten<br className="brand-heading-break" /> Westsachsen</span><span className="brand-subheading">Gemeinsam eine gute Zeit erleben.</span></span>
         </Link>
         <div className="header-actions">
-          <NavLink className="text-button" to="/">Freizeiten entdecken</NavLink>
+          <nav className="header-nav" aria-label="Hauptnavigation">
+            <NavLink to="/" end><Compass size={16} aria-hidden="true" />Freizeiten</NavLink>
+            {user && (
+              isAdmin ? (
+                <NavLink to="/admin"><Shield size={16} aria-hidden="true" />Verwaltung</NavLink>
+              ) : (
+                <NavLink to={user.provider_status === 'approved' ? '/dashboard' : '/traegerprofil'}>
+                  <CalendarCheck size={16} aria-hidden="true" />Vereinsbereich
+                </NavLink>
+              )
+            )}
+          </nav>
           {!user ? <Link className="secondary-action" to="/login">Vereins-Login</Link> : <button ref={toggle} type="button" className="menu-toggle" aria-label={isMenuOpen ? 'Menü schließen' : 'Menü öffnen'} aria-expanded={isMenuOpen} aria-controls="main-navigation" onClick={() => setIsMenuOpen(!isMenuOpen)}>{isMenuOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}</button>}
         </div>
         {user && <nav id="main-navigation" className={`main-nav ${isMenuOpen ? 'is-open' : ''}`} aria-label="Kontomenü" onBlur={event => { if (event.relatedTarget && !menu.current?.contains(event.relatedTarget as Node)) setIsMenuOpen(false); }}>
           <div className="menu-account-info"><span>Eingeloggt als</span><strong>{user.club_name || user.display_name || user.email}</strong></div>
-          <ul><li><NavLink to={isAdmin ? '/admin' : '/dashboard'} onClick={() => setIsMenuOpen(false)}>{isAdmin ? <Shield size={18} aria-hidden="true" /> : <UserRoundCog size={18} aria-hidden="true" />}{isAdmin ? 'Verwaltung' : 'Meine Freizeiten'}</NavLink></li>
-            <li><NavLink to={isAdmin ? '/pruefung' : '/traegerprofil'} onClick={() => setIsMenuOpen(false)}>{isAdmin ? 'Prüfungen & Anbieterexport' : 'Trägerprofil & Stammdaten'}</NavLink></li>
-            {!isAdmin && user.provider_status === 'approved' && <li><NavLink to="/buchungen" onClick={() => setIsMenuOpen(false)}>Anmeldungen & Wartelisten</NavLink></li>}
-            <li><NavLink to="/einstellungen" onClick={() => setIsMenuOpen(false)}><UserRoundCog size={18} aria-hidden="true" />Konto &amp; Einstellungen</NavLink></li></ul>
+          <ul>
+            <li><NavLink to="/" end onClick={() => setIsMenuOpen(false)}><Compass size={18} aria-hidden="true" />Alle Freizeiten</NavLink></li>
+            {isAdmin ? <>
+              <li><NavLink to="/admin" end onClick={() => setIsMenuOpen(false)}><LayoutDashboard size={18} aria-hidden="true" />Übersicht</NavLink></li>
+              <li><NavLink to="/admin/pruefungen" onClick={() => setIsMenuOpen(false)}><ClipboardCheck size={18} aria-hidden="true" />Prüfungen &amp; Freigaben</NavLink></li>
+              <li><NavLink to="/admin/vereine" onClick={() => setIsMenuOpen(false)}><Building2 size={18} aria-hidden="true" />Vereine &amp; Konten</NavLink></li>
+              <li><NavLink to="/admin/freizeiten" onClick={() => setIsMenuOpen(false)}><ShieldCheck size={18} aria-hidden="true" />Alle Freizeiten</NavLink></li>
+              <li><NavLink to="/admin/ferien" onClick={() => setIsMenuOpen(false)}><CalendarDays size={18} aria-hidden="true" />Ferienzeiten</NavLink></li>
+              <li><NavLink to="/admin/auswertung" onClick={() => setIsMenuOpen(false)}><FileSpreadsheet size={18} aria-hidden="true" />Auswertung &amp; Export</NavLink></li>
+            </> : <>
+              {user.provider_status === 'approved' && <>
+                <li><NavLink to="/dashboard" onClick={() => setIsMenuOpen(false)}><CalendarCheck size={18} aria-hidden="true" />Meine Freizeiten</NavLink></li>
+                <li><NavLink to="/buchungen" onClick={() => setIsMenuOpen(false)}><ClipboardCheck size={18} aria-hidden="true" />Anmeldungen &amp; Wartelisten</NavLink></li>
+              </>}
+              <li><NavLink to="/traegerprofil" onClick={() => setIsMenuOpen(false)}><Building2 size={18} aria-hidden="true" />Trägerprofil &amp; Stammdaten</NavLink></li>
+            </>}
+            <li><NavLink to="/einstellungen" onClick={() => setIsMenuOpen(false)}><UserRoundCog size={18} aria-hidden="true" />Konto &amp; Einstellungen</NavLink></li>
+          </ul>
           <div className="menu-divider" />
           <button type="button" className="menu-logout" disabled={loggingOut} onClick={async () => {
             if (loggingOut || !window.dispatchEvent(new Event('request-leave-editor', { cancelable: true }))) return;

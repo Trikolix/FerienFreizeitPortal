@@ -4,14 +4,12 @@ import { apiFetch } from '../utils/api';
 import React, { useEffect, useMemo, useState, useRef, lazy, Suspense } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { motion, useReducedMotion } from 'framer-motion';
-import { CalendarDays, ChevronDown, Euro, Filter, List, Map, MapPin, Search, Tag, UsersRound, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowRight, CalendarDays, ChevronDown, Euro, List, Map, MapPin, Search, Tag, UsersRound, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 
 const SearchMap = lazy(() => import('../components/SearchMap').then((m) => ({ default: m.SearchMap })));
 import { ImageGallery } from '../components/ImageGallery';
 import { stripHtmlAndTruncate } from '../utils/textUtils';
 import { availabilityLabel, availabilityTone, type AvailabilityState } from '../utils/placeRequests';
-
-
 
 interface Holiday {
   id: number;
@@ -108,12 +106,15 @@ export const SearchPage: React.FC = () => {
   const [startDateFilter, setStartDateFilter] = useState(searchParams.get('start_date') || '');
   const [endDateFilter, setEndDateFilter] = useState(searchParams.get('end_date') || '');
   const [holidayFilter, setHolidayFilter] = useState(searchParams.get('holiday') || '');
+  const [sortBy, setSortBy] = useState<'date' | 'price_asc' | 'title'>('date');
+  const [onlyAvailable, setOnlyAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const [bounds, setBounds] = useState<{ minLat: number; maxLat: number; minLng: number; maxLng: number } | null>(null);
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
   const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false);
+  const [showDateRange, setShowDateRange] = useState(Boolean((searchParams.get('start_date') || searchParams.get('end_date')) && !searchParams.get('holiday')));
   const [draftSelectedTypes, setDraftSelectedTypes] = useState<string[]>([]);
   const [draftStartDate, setDraftStartDate] = useState('');
   const [draftEndDate, setDraftEndDate] = useState('');
@@ -143,14 +144,12 @@ export const SearchPage: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-
-
   useEffect(() => {
     const fetchHolidays = async () => {
       try {
         const response = await apiFetch('/api/holidays');
         const data = await response.json();
-        setHolidays(data);
+        setHolidays(Array.isArray(data) ? data : []);
       } catch (err) {
         console.error(err);
       }
@@ -165,7 +164,7 @@ export const SearchPage: React.FC = () => {
       setError('');
       const params = new URLSearchParams();
       if (ageFilter) params.set('age', ageFilter);
-    if (locationFilter) params.set('location', locationFilter);
+      if (locationFilter) params.set('location', locationFilter);
       if (selectedTypes.length > 0) params.set('types', selectedTypes.join(','));
       if (startDateFilter) params.set('start_date', startDateFilter);
       if (endDateFilter) params.set('end_date', endDateFilter);
@@ -180,8 +179,8 @@ export const SearchPage: React.FC = () => {
         const res = await apiFetch(`/api/camps?${params.toString()}`, { signal: controller.signal });
         const data = await res.json();
         if (!controller.signal.aborted) setCamps(Array.isArray(data) ? data : []);
-      } catch (error) {
-        if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Die Suche konnte nicht geladen werden.');
+      } catch (err) {
+        if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Die Suche konnte nicht geladen werden.');
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
@@ -197,9 +196,29 @@ export const SearchPage: React.FC = () => {
     return Array.from(new Set([...fallback, ...fromCamps]));
   }, [camps]);
 
-  const hasActiveFilters = ageFilter !== '' || locationFilter !== '' || selectedTypes.length > 0 || startDateFilter !== '' || endDateFilter !== '';
+  const displayedCamps = useMemo(() => {
+    const filtered = onlyAvailable
+      ? camps.filter((camp) => camp.availability_state !== 'sold_out' && camp.availability_state !== 'closed' && camp.status !== 'fully_booked')
+      : [...camps];
+    return filtered.sort((a, b) => {
+      if (sortBy === 'price_asc') {
+        const pa = a.price_eur === undefined || a.price_eur === '' ? Number.POSITIVE_INFINITY : Number(a.price_eur);
+        const pb = b.price_eur === undefined || b.price_eur === '' ? Number.POSITIVE_INFINITY : Number(b.price_eur);
+        return pa - pb;
+      }
+      if (sortBy === 'title') return a.title.localeCompare(b.title, 'de');
+      return (a.starts_at || '9999').localeCompare(b.starts_at || '9999');
+    });
+  }, [camps, onlyAvailable, sortBy]);
+
+  const activeHolidayName = useMemo(
+    () => holidays.find((holiday) => holiday.id.toString() === holidayFilter)?.name,
+    [holidays, holidayFilter]
+  );
+
+  const hasActiveFilters = ageFilter !== '' || locationFilter !== '' || selectedTypes.length > 0 || startDateFilter !== '' || endDateFilter !== '' || onlyAvailable;
   const additionalFilterCount = selectedTypes.length + (startDateFilter || endDateFilter ? (holidayFilter ? 0 : 1) : 0);
-  const resultCountLabel = loading ? 'Suche läuft …' : error ? 'Suche nicht verfügbar' : `${camps.length} ${camps.length === 1 ? 'Angebot' : 'Angebote'}`;
+  const resultCountLabel = loading ? 'Suche läuft …' : error ? 'Suche nicht verfügbar' : `${displayedCamps.length} ${displayedCamps.length === 1 ? 'Angebot' : 'Angebote'}`;
 
   const applyHolidayFilter = (value: string) => {
     setHolidayFilter(value);
@@ -228,10 +247,11 @@ export const SearchPage: React.FC = () => {
     setStartDateFilter('');
     setEndDateFilter('');
     setHolidayFilter('');
+    setOnlyAvailable(false);
   };
 
   const toggleType = (type: string) => {
-    setSelectedTypes(prev => 
+    setSelectedTypes(prev =>
       prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
     );
   };
@@ -273,19 +293,32 @@ export const SearchPage: React.FC = () => {
 
   return (
     <div className="search-page">
-      <div className="search-intro"><span className="eyebrow">Ferien in Westsachsen</span><h1>Eine gute Zeit beginnt hier.</h1><p>Entdecke Freizeiten für Kinder und Jugendliche – und finde das Angebot, das zu euch passt.</p></div>
-      <section className="filter-panel" aria-label="Suchfilter">
-        <label className="field portal-location-filter"><span>Ort oder Einrichtung suchen</span><input type="search" maxLength={120} value={locationFilter} onChange={event => setLocationFilter(event.target.value)} placeholder="z. B. Zwickau" /></label>
-        <div className="filter-group-main desktop-filter-controls">
-          <div className="filter-title">
-            <Filter size={20} />
-            <span>Filter</span>
-          </div>
+      <section className="search-intro-compact" aria-label="Einführung">
+        <span className="eyebrow">Ferien im Zwickauer Land &amp; Westsachsen</span>
+        <h1>Eine gute Zeit beginnt hier.</h1>
+        <p>Gemeinnützige Ferienfreizeiten, Workshops und Ausflüge – einfach filtern und direkt anmelden.</p>
+      </section>
 
-          <label className="field">
+      <section className="filter-panel search-bar-card" aria-label="Suchfilter">
+        <div className="search-bar-row desktop-filter-controls">
+          <label className="field search-field-location">
+            <span>Ort oder Einrichtung</span>
+            <div className="input-with-icon">
+              <Search size={18} aria-hidden="true" />
+              <input
+                type="search"
+                maxLength={120}
+                value={locationFilter}
+                onChange={event => setLocationFilter(event.target.value)}
+                placeholder="z. B. Zwickau, Werdau …"
+              />
+            </div>
+          </label>
+
+          <label className="field search-field-age">
             <span>Alter</span>
             <div className="input-with-icon">
-              <UsersRound size={18} />
+              <UsersRound size={18} aria-hidden="true" />
               <input
                 id="age-filter"
                 type="number"
@@ -300,43 +333,43 @@ export const SearchPage: React.FC = () => {
           <div className="field">
             <span>Kategorie</span>
             <div className="multi-select-container" ref={typeDropdownRef}>
-              <button type="button" aria-label="Kategorien wählen"
-                className="multi-select-trigger" 
+              <button
+                type="button"
+                aria-label="Kategorien wählen"
+                className="multi-select-trigger"
                 onClick={() => setIsTypeDropdownOpen(!isTypeDropdownOpen)}
                 aria-expanded={isTypeDropdownOpen}
               >
                 <span className="multi-select-value">
-                  <Tag size={18} />
+                  <Tag size={18} aria-hidden="true" />
                   <span className={selectedTypes.length ? '' : 'is-placeholder'}>
                     {selectedTypes.length === 0 ? 'Alle Kategorien' : selectedTypes.join(', ')}
                   </span>
                 </span>
-                <ChevronDown size={16} />
+                <ChevronDown size={16} aria-hidden="true" />
               </button>
-              
-                {isTypeDropdownOpen && (
-                  <div
-                    className="multi-select-dropdown"
-                  >
-                    {typeOptions.map(type => (
-                      <label key={type} className="multi-select-option">
-                        <input 
-                          type="checkbox" 
-                          checked={selectedTypes.includes(type)} 
-                          onChange={() => toggleType(type)}
-                        />
-                        <span>{type}</span>
-                      </label>
-                    ))}
-                  </div>
-                )}
+
+              {isTypeDropdownOpen && (
+                <div className="multi-select-dropdown">
+                  {typeOptions.map(type => (
+                    <label key={type} className="multi-select-option">
+                      <input
+                        type="checkbox"
+                        checked={selectedTypes.includes(type)}
+                        onChange={() => toggleType(type)}
+                      />
+                      <span>{type}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
           <label className="field">
             <span>Ferien</span>
             <div className="input-with-icon">
-              <CalendarDays size={18} />
+              <CalendarDays size={18} aria-hidden="true" />
               <select
                 id="holiday-filter"
                 aria-label="Ferien auswählen"
@@ -351,14 +384,35 @@ export const SearchPage: React.FC = () => {
             </div>
           </label>
 
-          <div className="field-row">
+          <div className="search-bar-actions">
+            <button
+              type="button"
+              className={`secondary-action date-toggle-btn ${showDateRange ? 'is-active' : ''}`}
+              aria-expanded={showDateRange}
+              onClick={() => setShowDateRange((open) => !open)}
+            >
+              <CalendarDays size={16} aria-hidden="true" />
+              <span>Zeitraum</span>
+              <ChevronDown size={15} aria-hidden="true" />
+            </button>
+            {hasActiveFilters && (
+              <button className="text-button filter-reset" type="button" onClick={resetFilters}>
+                <RotateCcw size={16} aria-hidden="true" />
+                Zurücksetzen
+              </button>
+            )}
+          </div>
+        </div>
+
+        {showDateRange && (
+          <div className="date-range-drawer desktop-filter-controls">
             <label className="field">
               <span>Zeitraum von</span>
               <div className="input-with-icon">
-                <CalendarDays size={18} />
+                <CalendarDays size={18} aria-hidden="true" />
                 <input
-                type="date"
-                value={startDateFilter}
+                  type="date"
+                  value={startDateFilter}
                   onChange={(event) => updateStartDateFilter(event.target.value)}
                 />
               </div>
@@ -366,7 +420,7 @@ export const SearchPage: React.FC = () => {
             <label className="field">
               <span>bis</span>
               <div className="input-with-icon">
-                <CalendarDays size={18} />
+                <CalendarDays size={18} aria-hidden="true" />
                 <input
                   type="date"
                   value={endDateFilter}
@@ -376,22 +430,27 @@ export const SearchPage: React.FC = () => {
               </div>
             </label>
           </div>
-          {hasActiveFilters && (
-            <button 
-              className="text-button filter-reset" 
-              onClick={resetFilters} 
-            >
-              <RotateCcw size={16} />
-              Filter zurücksetzen
-            </button>
-          )}
-        </div>
+        )}
 
         <div className="mobile-filter-quick">
+          <label className="field search-field-location">
+            <span>Ort oder Einrichtung</span>
+            <div className="input-with-icon">
+              <Search size={18} aria-hidden="true" />
+              <input
+                type="search"
+                maxLength={120}
+                value={locationFilter}
+                onChange={event => setLocationFilter(event.target.value)}
+                placeholder="z. B. Zwickau, Werdau …"
+              />
+            </div>
+          </label>
+
           <label className="field">
             <span>Alter</span>
             <div className="input-with-icon">
-              <UsersRound size={18} />
+              <UsersRound size={18} aria-hidden="true" />
               <input
                 id="mobile-age-filter"
                 type="number"
@@ -404,9 +463,9 @@ export const SearchPage: React.FC = () => {
           </label>
 
           <label className="field">
-            <span>Zeitraum</span>
+            <span>Ferien</span>
             <div className="input-with-icon">
-              <CalendarDays size={18} />
+              <CalendarDays size={18} aria-hidden="true" />
               <select value={holidayFilter} onChange={(event) => applyHolidayFilter(event.target.value)}>
                 <option value="">Alle Zeiträume</option>
                 {holidays.map((holiday) => (
@@ -424,21 +483,62 @@ export const SearchPage: React.FC = () => {
             aria-haspopup="dialog"
             aria-expanded={isMobileFiltersOpen}
           >
-            <SlidersHorizontal size={18} />
+            <SlidersHorizontal size={18} aria-hidden="true" />
             Filter{additionalFilterCount > 0 ? ` (${additionalFilterCount})` : ''}
           </button>
         </div>
 
-        {(selectedTypes.length > 0 || (startDateFilter || endDateFilter) && !holidayFilter) && (
-          <div className="mobile-active-filters" aria-label="Aktive Filter">
+        <div className="discovery-strip-compact" role="group" aria-label="Schnellwahl Themenbereich">
+          <span className="discovery-label">Themen:</span>
+          <div className="discovery-chips">
+            {typeOptions.map((type) => {
+              const active = selectedTypes.includes(type);
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  className={`discovery-chip ${active ? 'is-active' : ''}`}
+                  aria-pressed={active}
+                  onClick={() => toggleType(type)}
+                >
+                  <Tag size={15} aria-hidden="true" />
+                  {type}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {hasActiveFilters && (
+          <div className="active-filter-chips" aria-label="Aktive Filter">
+            {locationFilter && (
+              <button type="button" className="filter-chip" onClick={() => setLocationFilter('')}>
+                Ort: {locationFilter}<X size={14} aria-hidden="true" />
+              </button>
+            )}
+            {ageFilter && (
+              <button type="button" className="filter-chip" onClick={() => setAgeFilter('')}>
+                Alter: {ageFilter} Jahre<X size={14} aria-hidden="true" />
+              </button>
+            )}
             {selectedTypes.map((type) => (
-              <button key={type} type="button" onClick={() => setSelectedTypes((current) => current.filter((item) => item !== type))}>
+              <button key={type} type="button" className="filter-chip" onClick={() => toggleType(type)}>
                 {type}<X size={14} aria-hidden="true" />
               </button>
             ))}
+            {activeHolidayName && (
+              <button type="button" className="filter-chip" onClick={() => applyHolidayFilter('')}>
+                {activeHolidayName}<X size={14} aria-hidden="true" />
+              </button>
+            )}
             {(startDateFilter || endDateFilter) && !holidayFilter && (
-              <button type="button" onClick={() => { setStartDateFilter(''); setEndDateFilter(''); }}>
+              <button type="button" className="filter-chip" onClick={() => { setStartDateFilter(''); setEndDateFilter(''); }}>
                 {startDateFilter || '…'} – {endDateFilter || '…'}<X size={14} aria-hidden="true" />
+              </button>
+            )}
+            {onlyAvailable && (
+              <button type="button" className="filter-chip" onClick={() => setOnlyAvailable(false)}>
+                Nur freie Plätze<X size={14} aria-hidden="true" />
               </button>
             )}
           </div>
@@ -447,44 +547,82 @@ export const SearchPage: React.FC = () => {
 
       <div className="result-toolbar">
         <span className="result-count" role="status" aria-atomic="true" aria-live="polite">{resultCountLabel}</span>
-        <div className="segmented-control" role="group" aria-label="Darstellung wählen">
-          <button
-            type="button"
-            className={viewMode === 'list' ? 'is-active' : ''}
-            onClick={() => {
-              setViewMode('list');
-              setBounds(null);
-            }}
-            aria-pressed={viewMode === 'list'}
-          >
-            <List size={18} />
-            Liste
-          </button>
-          <button
-            type="button"
-            className={viewMode === 'map' ? 'is-active' : ''}
-            onClick={() => setViewMode('map')}
-            aria-pressed={viewMode === 'map'}
-          >
-            <Map size={18} />
-            Karte
-          </button>
+        <div className="toolbar-controls">
+          <label className="toolbar-toggle">
+            <input type="checkbox" checked={onlyAvailable} onChange={(event) => setOnlyAvailable(event.target.checked)} />
+            <span>Nur buchbare / freie Plätze</span>
+          </label>
+          <label className="toolbar-sort">
+            <span className="sr-only">Sortierung</span>
+            <select aria-label="Angebote sortieren" value={sortBy} onChange={(event) => setSortBy(event.target.value as 'date' | 'price_asc' | 'title')}>
+              <option value="date">Nächster Termin</option>
+              <option value="price_asc">Preis aufsteigend</option>
+              <option value="title">Titel A–Z</option>
+            </select>
+          </label>
+          <div className="segmented-control" role="group" aria-label="Darstellung wählen">
+            <button
+              type="button"
+              className={viewMode === 'list' ? 'is-active' : ''}
+              onClick={() => {
+                setViewMode('list');
+                setBounds(null);
+              }}
+              aria-pressed={viewMode === 'list'}
+            >
+              <List size={18} aria-hidden="true" />
+              Liste
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'map' ? 'is-active' : ''}
+              onClick={() => setViewMode('map')}
+              aria-pressed={viewMode === 'map'}
+            >
+              <Map size={18} aria-hidden="true" />
+              Karte
+            </button>
+          </div>
         </div>
       </div>
 
-      {loading && <p role="status">Freizeiten werden gesucht …</p>}
+      {loading && (
+        <>
+          <p role="status">Freizeiten werden gesucht …</p>
+          {viewMode === 'list' && (
+            <ul className="camp-grid" aria-hidden="true">
+              {[1, 2, 3].map((slot) => (
+                <li key={slot} className="camp-card camp-skeleton">
+                  <div className="skeleton-media" />
+                  <div className="skeleton-body">
+                    <div className="skeleton-line is-title" />
+                    <div className="skeleton-line is-short" />
+                    <div className="skeleton-line" />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
       {error && <p className="alert" role="alert">{error} <button type="button" onClick={() => setRetry((value) => value + 1)}>Erneut versuchen</button></p>}
       {viewMode === 'list' ? (
         <section aria-label="Ergebnisliste">
-          {camps.length === 0 && !loading && !error ? (
+          {displayedCamps.length === 0 && !loading && !error ? (
             <div className="empty-state">
-              <Search size={36} />
+              <Search size={36} aria-hidden="true" />
               <h2>Keine passenden Freizeiten gefunden</h2>
-              <p>Ändere Alter oder Kategorie, um mehr Angebote zu sehen.</p>
+              <p>Ändere Alter, Kategorie oder Zeitraum, um mehr Angebote zu sehen.</p>
+              {hasActiveFilters && (
+                <button type="button" className="secondary-action" onClick={resetFilters}>
+                  <RotateCcw size={16} aria-hidden="true" />
+                  Alle Filter zurücksetzen
+                </button>
+              )}
             </div>
           ) : (
             <ul className="camp-grid">
-              {camps.map((camp) => {
+              {displayedCamps.map((camp) => {
                 const holiday = getHolidayForCamp(camp, holidays);
                 return (
                   <motion.li
@@ -500,7 +638,7 @@ export const SearchPage: React.FC = () => {
                         )) || <span className="camp-type">{camp.type}</span>}
                         {holiday && (
                           <span className="status-pill is-live badge-pill">
-                            <CalendarDays size={14} /> {holiday.name}
+                            <CalendarDays size={14} aria-hidden="true" /> {holiday.name}
                           </span>
                         )}
                       </div>
@@ -515,16 +653,16 @@ export const SearchPage: React.FC = () => {
                           <span className={`status-pill ${availabilityTone(camp.availability_state)} badge-pill`}>{availabilityLabel(camp)}</span>
                         )}
                         <span>
-                          <UsersRound size={16} />
+                          <UsersRound size={16} aria-hidden="true" />
                           {camp.min_age}-{camp.max_age} Jahre
                         </span>
                         <span>
-                          <MapPin size={16} />
+                          <MapPin size={16} aria-hidden="true" />
                           {camp.location_text || 'Ort offen'}
                         </span>
                         {formatDateRange(camp.starts_at, camp.ends_at) && (
                           <span>
-                            <CalendarDays size={16} />
+                            <CalendarDays size={16} aria-hidden="true" />
                             {formatDateRange(camp.starts_at, camp.ends_at)}
                           </span>
                         )}
@@ -544,10 +682,14 @@ export const SearchPage: React.FC = () => {
                       </div>
                       <div className="camp-footer">
                         <span>
-                          <Euro size={16} />
+                          <Euro size={16} aria-hidden="true" />
                           {formatPrice(camp.price_eur)}
                         </span>
-                        {isRegistrationClosed(camp.registration_deadline) && <span className="is-warning">Anmeldeschluss vorbei</span>}
+                        {isRegistrationClosed(camp.registration_deadline) ? (
+                          <span className="is-warning">Anmeldeschluss vorbei</span>
+                        ) : (
+                          <span className="camp-cta-hint">Details <ArrowRight size={15} aria-hidden="true" /></span>
+                        )}
                       </div>
                     </Link>
                   </motion.li>
@@ -557,7 +699,7 @@ export const SearchPage: React.FC = () => {
           )}
         </section>
       ) : (
-        <Suspense fallback={<p role="status">Karte wird geladen …</p>}><SearchMap camps={camps} setBounds={setBounds} /></Suspense>
+        <Suspense fallback={<p role="status">Karte wird geladen …</p>}><SearchMap camps={displayedCamps} setBounds={setBounds} /></Suspense>
       )}
 
       {isMobileFiltersOpen && (
@@ -572,7 +714,7 @@ export const SearchPage: React.FC = () => {
                 <h2 id="mobile-filter-title">Weitere Filter</h2>
               </div>
               <button className="mobile-filter-close" type="button" onClick={closeMobileFilters} aria-label="Filter schließen">
-                <X size={22} />
+                <X size={22} aria-hidden="true" />
               </button>
             </div>
 
@@ -587,12 +729,12 @@ export const SearchPage: React.FC = () => {
                     aria-expanded={isDraftTypeDropdownOpen}
                   >
                     <span className="multi-select-value">
-                      <Tag size={18} />
+                      <Tag size={18} aria-hidden="true" />
                       <span className={draftSelectedTypes.length ? '' : 'is-placeholder'}>
                         {draftSelectedTypes.length === 0 ? 'Alle Kategorien' : draftSelectedTypes.join(', ')}
                       </span>
                     </span>
-                    <ChevronDown size={16} />
+                    <ChevronDown size={16} aria-hidden="true" />
                   </button>
 
                   {isDraftTypeDropdownOpen && (
@@ -616,7 +758,7 @@ export const SearchPage: React.FC = () => {
                 <label className="field">
                   <span>Zeitraum von</span>
                   <div className="input-with-icon">
-                    <CalendarDays size={18} />
+                    <CalendarDays size={18} aria-hidden="true" />
                     <input
                       type="date"
                       value={draftStartDate}
@@ -633,7 +775,7 @@ export const SearchPage: React.FC = () => {
                 <label className="field">
                   <span>Bis</span>
                   <div className="input-with-icon">
-                    <CalendarDays size={18} />
+                    <CalendarDays size={18} aria-hidden="true" />
                     <input
                       type="date"
                       value={draftEndDate}

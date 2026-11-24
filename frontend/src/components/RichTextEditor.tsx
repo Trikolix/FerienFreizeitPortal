@@ -27,7 +27,7 @@ export function RichTextEditor({ value, onChange, errorId }: { value: string; on
     editor?.setAttribute('aria-invalid', String(Boolean(errorId)));
   }, [id, errorId]);
   const updateFormats = () => { const editor = ref.current?.getEditor(); if (editor) setFormats(editor.getFormat()); };
-  const format = (name: string, val: unknown) => { const editor = ref.current?.getEditor(); editor?.focus(); editor?.format(name, val); updateFormats(); };
+  const format = (name: string, val: unknown) => { const editor = ref.current?.getEditor(); editor?.focus(); editor?.format(name, val, 'user'); updateFormats(); };
   const openLink = () => {
     const editor = ref.current?.getEditor();
     if (!editor) return;
@@ -48,9 +48,9 @@ export function RichTextEditor({ value, onChange, errorId }: { value: string; on
       <button type="button" aria-pressed={formats.list === 'bullet'} onMouseDown={event => event.preventDefault()} onClick={() => format('list', formats.list === 'bullet' ? false : 'bullet')}>Aufzählung</button>
       <button type="button" aria-pressed={formats.list === 'ordered'} onMouseDown={event => event.preventDefault()} onClick={() => format('list', formats.list === 'ordered' ? false : 'ordered')}>Nummerierung</button>
       <button type="button" onMouseDown={event => event.preventDefault()} onClick={openLink}>Link bearbeiten</button>
-      <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => { const editor = ref.current?.getEditor(); const range = editor?.getSelection(true); if (range) editor?.removeFormat(range.index, range.length); updateFormats(); }}>Formatierung entfernen</button>
+      <button type="button" onMouseDown={event => event.preventDefault()} onClick={() => { const editor = ref.current?.getEditor(); const range = editor?.getSelection(true); if (range) editor?.removeFormat(range.index, range.length, 'user'); updateFormats(); }}>Formatierung entfernen</button>
     </div>
-    <ReactQuill ref={ref} theme="snow" modules={modules} formats={allowedFormats} value={value} onChange={(html: string) => { onChange(safeHtml(html)); updateFormats(); }} onChangeSelection={(range: Range | null) => { if (range) { selection.current = range; updateFormats(); } }} />
+    <ReactQuill ref={ref} theme="snow" modules={modules} formats={allowedFormats} value={value} onChange={(html: string, _delta: unknown, source: string) => { if (source === 'user') onChange(safeHtml(html)); updateFormats(); }} onChangeSelection={(range: Range | null) => { if (range) { selection.current = range; updateFormats(); } }} />
     <p id={id + '-help'} className="editor-help">Beschreibe die Freizeit in kurzen Absätzen. Markiere Text, um ihn zu formatieren oder einen Link einzufügen.</p>
     {linkOpen && <Modal title="Link bearbeiten" onClose={() => setLinkOpen(false)}>
       <h2>Link bearbeiten</h2>
@@ -60,8 +60,8 @@ export function RichTextEditor({ value, onChange, errorId }: { value: string; on
         if (url && !/^(https?:\/\/|mailto:|tel:)/i.test(url.trim())) { setLinkError('Bitte eine Adresse mit https://, http://, mailto: oder tel: eingeben.'); return; }
         const editor = ref.current?.getEditor();
         const range = selection.current;
-        if (range.length) editor?.formatText(range.index, range.length, 'link', url.trim() || false);
-        else if (url.trim()) editor?.insertText(range.index, url.trim(), 'link', url.trim());
+        if (range.length) editor?.formatText(range.index, range.length, 'link', url.trim() || false, 'user');
+        else if (url.trim()) editor?.insertText(range.index, url.trim(), 'link', url.trim(), 'user');
         setLinkOpen(false);
       }}>Übernehmen</button><button type="button" className="secondary-action" onClick={() => setLinkOpen(false)}>Abbrechen</button></div>
     </Modal>}
