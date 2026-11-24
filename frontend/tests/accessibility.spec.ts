@@ -83,13 +83,13 @@ test('provider editor, rich text, preview and account settings are accessible', 
   await accessible(page);
   await page.keyboard.press('Escape');
   await expect(page.getByRole('button', { name: 'Menü öffnen' })).toBeFocused();
-  await page.getByRole('button', { name: 'Freizeit anlegen', exact: true }).first().click();
+  await page.getByRole('link', { name: 'Freizeit anlegen', exact: true }).first().click();
   await accessible(page); await fits(page);
   await page.getByRole('textbox', { name: 'Beschreibung' }).fill('Eine gut zugängliche Freizeit.');
   await page.getByRole('button', { name: 'Link bearbeiten', exact: true }).click();
   await accessible(page);
   await page.keyboard.press('Escape');
-  for (const name of [/2\. Termin/, /3\. Plätze/, /4\. Ort/, /5\. Bilder/]) {
+  for (const name of [/2\. Termin/, /3\. Plätze/, /4\. Ort/, /5\. Bilder/, /6\. Rechtliches/]) {
     await page.getByRole('button', { name }).click(); await accessible(page); await fits(page);
   }
   await page.getByRole('button', { name: 'Vorschau', exact: true }).click();
@@ -111,12 +111,13 @@ test('admin and reflow with increased text spacing are accessible', async ({ pag
   await page.setViewportSize({ width: 320, height: 640 });
   await page.addStyleTag({ content: 'body { line-height: 1.5 !important; letter-spacing: .12em !important; word-spacing: .16em !important; } p { margin-bottom: 2em !important; }' });
   await fits(page);
-  await page.getByRole('button', { name: 'Demo: Waldcamp – demnächst bearbeiten' }).click();
+  await page.goto('/admin/freizeiten');
+  await page.getByRole('link', { name: 'Demo: Waldcamp – demnächst bearbeiten' }).click();
   const editor = page.locator('form').filter({ has: page.getByRole('textbox', { name: 'Beschreibung' }) });
   await editor.getByRole('textbox', { name: 'Titel', exact: true }).fill('');
-  await editor.getByRole('button', { name: 'Speichern', exact: true }).click();
+  await editor.getByRole('button', { name: 'Speichern & direkt freigeben', exact: true }).click();
   await expect(editor.getByRole('textbox', { name: 'Titel', exact: true })).toBeFocused();
-  await expect(editor.getByRole('textbox', { name: 'Titel', exact: true })).toHaveAttribute('aria-describedby', 'admin-error-title');
+  await expect(editor.getByRole('textbox', { name: 'Titel', exact: true })).toHaveAttribute('aria-describedby', 'error-title');
   await accessible(page); await fits(page);
   page.on('dialog', dialog => dialog.accept());
   await page.goto('/einstellungen'); await accessible(page); await fits(page);

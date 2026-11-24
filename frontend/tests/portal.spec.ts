@@ -45,7 +45,7 @@ test('HttpOnly session survives reload and logout invalidates it', async ({ page
 
 test('unfinished draft saves, hidden required fields block publication and focus title', async ({ page }) => {
   await login(page);
-  await page.getByRole('button', { name: 'Freizeit anlegen', exact: true }).first().click();
+  await page.getByRole('link', { name: 'Freizeit anlegen', exact: true }).first().click();
   await page.getByRole('button', { name: /5\. Bilder/ }).click();
   await page.getByRole('button', { name: 'Zur Prüfung einreichen', exact: true }).click();
   await expect(page.getByLabel(/^Titel(?:\s+\(erforderlich\))?$/)).toBeFocused();
@@ -60,7 +60,7 @@ test('unfinished draft saves, hidden required fields block publication and focus
 test('full publishing flow, preview modal and search', async ({ page }) => {
   await login(page);
   const title = `Published ${Date.now()}`;
-  await page.getByRole('button', { name: 'Freizeit anlegen', exact: true }).first().click();
+  await page.getByRole('link', { name: 'Freizeit anlegen', exact: true }).first().click();
   await page.getByLabel(/^Titel(?:\s+\(erforderlich\))?$/).fill(title);
   await page.getByRole('button', { name: 'Kategorien wählen' }).click();
   await page.getByLabel(/^Natur(?:\s+\(erforderlich\))?$/).check();
@@ -94,24 +94,23 @@ test('full publishing flow, preview modal and search', async ({ page }) => {
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('button', { name: 'Zur Prüfung einreichen', exact: true }).click();
   await expect(page.getByRole('heading', { name: title })).toBeVisible();
-  await page.getByLabel('Freizeiten suchen').fill(title);
-  await expect(page.locator('.management-item')).toHaveCount(1);
   await approveOffer(page, title);
   await page.reload();
+  await expect(page.locator('.workspace-content')).toContainText('20 von 20 Plätzen frei');
+  await page.getByLabel('Freizeiten nach externer Belegung').or(page.getByLabel('Freie Plätze nach externer Belegung')).fill('0');
+  await page.getByRole('button', { name: 'Bestand speichern' }).click();
+  await expect(page.locator('.workspace-content')).toContainText('0 von 20 Plätzen frei');
+  await expect(page.locator('.workspace-content')).toContainText('Ausgebucht');
+  await page.goto('/dashboard');
   await page.getByLabel('Freizeiten suchen').fill(title);
-  const campItem = page.locator('.management-item').first();
-  await expect(campItem).toContainText('20 von 20 Plätzen frei');
-  await campItem.getByLabel('Freie Plätze nach externer Belegung').fill('0');
-  await campItem.getByRole('button', { name: 'Bestand speichern' }).click();
-  await expect(campItem).toContainText('0 von 20 Plätzen frei');
-  await expect(campItem).toContainText('Ausgebucht');
+  await expect(page.locator('.management-item')).toHaveCount(1);
   await page.getByLabel('Freizeiten suchen').fill('does-not-exist');
   await expect(page.getByRole('heading', { name: 'Keine passenden Freizeiten' })).toBeVisible();
 });
 
 test('failed save preserves data and double submit is locked', async ({ page }) => {
   await login(page);
-  await page.getByRole('button', { name: 'Freizeit anlegen', exact: true }).first().click();
+  await page.getByRole('link', { name: 'Freizeit anlegen', exact: true }).first().click();
   await page.getByLabel(/^Titel(?:\s+\(erforderlich\))?$/).fill('Unsaved work');
   let requests = 0;
   await page.route('**/api/camps', async (route) => {
@@ -129,7 +128,7 @@ test('failed save preserves data and double submit is locked', async ({ page }) 
 
 test('session expiry allows reauthentication without losing editor input', async ({ page, context }) => {
   await login(page);
-  await page.getByRole('button', { name: 'Freizeit anlegen', exact: true }).first().click();
+  await page.getByRole('link', { name: 'Freizeit anlegen', exact: true }).first().click();
   await page.getByLabel(/^Titel(?:\s+\(erforderlich\))?$/).fill('Keep this draft');
   await context.clearCookies();
   await page.getByRole('button', { name: 'Als Entwurf speichern' }).click();
@@ -144,6 +143,7 @@ test('session expiry allows reauthentication without losing editor input', async
 
 test('admin filters and resend invitation error are visible', async ({ page }) => {
   await login(page, 'admin');
+  await page.goto('/admin/vereine?einladen=1');
   await page.getByLabel('Vereine suchen').fill('testverein');
   await expect(page.locator('.club-card')).toHaveCount(1);
   await page.getByLabel('E-Mail').fill(`invite-${Date.now()}@example.test`);
@@ -158,7 +158,7 @@ test('admin filters and resend invitation error are visible', async ({ page }) =
 
 test('selected images load before upload and appear in the full preview', async ({ page }) => {
   await login(page);
-  await page.getByRole('button', { name: 'Freizeit anlegen', exact: true }).first().click();
+  await page.getByRole('link', { name: 'Freizeit anlegen', exact: true }).first().click();
   await page.getByLabel(/^Titel(?:\s+\(erforderlich\))?$/).fill('Image preview test');
   await page.getByRole('button', { name: /5\. Bilder/ }).click();
   await page.getByLabel('Bilder hinzufügen').setInputFiles({
@@ -223,22 +223,21 @@ test('image descriptions persist on upload and editing without breaking the imag
   await login(page);
   const title = `Bildpflege ${Date.now()}`;
   const png = await page.getByRole('heading', { name: 'Meine Freizeiten', exact: true }).screenshot();
-  await page.getByRole('button', { name: 'Freizeit anlegen', exact: true }).first().click();
+  await page.getByRole('link', { name: 'Freizeit anlegen', exact: true }).first().click();
   await page.getByRole('textbox', { name: 'Titel', exact: true }).fill(title);
   await page.getByRole('button', { name: /5\. Bilder/ }).click();
   await page.getByLabel('Bilder hinzufügen').setInputFiles({ name: 'bildpflege.png', mimeType: 'image/png', buffer: png });
   await page.getByLabel('Bildbeschreibung für bildpflege.png').fill('Screenshot der Überschrift Meine Freizeiten');
   await page.getByRole('button', { name: 'Als Entwurf speichern', exact: true }).click();
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
-  await page.getByLabel('Freizeiten suchen').fill(title);
-  await page.getByRole('button', { name: 'Bearbeiten', exact: true }).click();
+  await page.getByRole('link', { name: 'Bearbeiten', exact: true }).first().click();
   await page.getByRole('button', { name: /5\. Bilder/ }).click();
   await expect(page.getByLabel('Bildbeschreibung 1')).toHaveValue('Screenshot der Überschrift Meine Freizeiten');
   await page.getByLabel('Bildbeschreibung 1').fill('Geänderte Beschreibung der Testüberschrift');
   await page.getByRole('button', { name: 'Als Entwurf speichern', exact: true }).click();
   await expect(page.locator('.camp-editor')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Bearbeiten', exact: true }).click();
+  await page.getByRole('link', { name: 'Bearbeiten', exact: true }).first().click();
   await page.getByRole('button', { name: /5\. Bilder/ }).click();
   await expect(page.getByLabel('Bildbeschreibung 1')).toHaveValue('Geänderte Beschreibung der Testüberschrift');
   await page.getByRole('button', { name: 'Vorschau', exact: true }).click();

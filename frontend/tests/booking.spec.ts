@@ -93,7 +93,6 @@ test('organisation registers, verifies email, supplies missing-number reasons an
   await page.goto(`/registrierung-bestaetigen#token=${mailToken('provider_verify', email)}`); await expect(page.getByRole('status')).toContainText(/E-Mail (bereits )?bestätigt/);
   await page.getByRole('link', { name: 'Anmelden und Stammdaten ergänzen' }).click(); await page.getByLabel('E-Mail oder Nutzername').fill(email); await page.getByLabel(/^Passwort/).fill(password); await page.getByRole('button', { name: 'Anmelden', exact: true }).click(); await expect(page).toHaveURL(/traegerprofil$/);
   await page.getByLabel('Öffentlicher Anbietername').fill(name); await page.getByLabel('Öffentliche Kontaktinformationen').fill('Kontakt zum Verein'); await page.getByLabel('Eingetragener Name').fill(`${name} e. V.`); await page.getByLabel('Rechtsform').fill('Verein'); await page.getByLabel('Straße und Hausnummer').fill('Testweg 1'); await page.getByLabel('Postleitzahl').fill('08056'); await page.getByLabel('Ort', { exact: true }).fill('Zwickau'); await page.getByLabel('Begründung, falls keine Registerangabe vorhanden').fill('Nicht im Handelsregister eingetragen'); await page.getByLabel('Begründung, falls keine Steuerkennung vorhanden').fill('Noch keine Kennung erteilt');
-  await page.getByRole('checkbox', { name: 'DE', exact: true }).check();
   await page.getByRole('button', { name: 'Speichern und zur Prüfung einreichen' }).click(); await expect(page.getByRole('status')).toContainText('zur Prüfung eingereicht'); await accessible(page);
   const headers = await apiLogin(request, 'admin'); const providers = await (await request.get('/api/admin/providers')).json(); const provider = providers.find((entry: { email: string }) => entry.email === email);
   expect((await request.post(`/api/admin/providers/${provider.id}/review`, { headers, data: { decision: 'approved', profile_version: provider.version } })).ok()).toBeTruthy();
@@ -102,7 +101,8 @@ test('organisation registers, verifies email, supplies missing-number reasons an
 
 test('administrator downloads real provider workbook and views anonymous statistics', async ({ page }) => {
   test.setTimeout(60000); await page.goto('/login'); await page.getByLabel('E-Mail oder Nutzername').fill('admin'); await page.getByLabel(/^Passwort/).fill('admin'); await page.getByRole('button', { name: 'Anmelden', exact: true }).click(); await expect(page).toHaveURL(/admin$/);
-  await page.goto('/pruefung'); await page.setViewportSize({ width: 768, height: 1024 }); await expect(page.getByRole('heading', { name: 'Trägerprüfung und Angebotsfreigabe' })).toBeVisible(); await accessible(page);
+  await page.goto('/admin/pruefungen'); await page.setViewportSize({ width: 768, height: 1024 }); await expect(page.getByRole('heading', { name: 'Trägerprüfung und Angebotsfreigabe' })).toBeVisible(); await accessible(page);
+  await page.goto('/admin/auswertung'); await expect(page.getByRole('heading', { name: 'Auswertung & Anbieterexport' })).toBeVisible(); await accessible(page);
   const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Anbieter als Excel herunterladen' }).click(); expect((await download).suggestedFilename()).toMatch(/^Anbieter-\d{4}\.xlsx$/);
 });
 
@@ -134,7 +134,7 @@ test('provider saves per-offer mail information and both recipients receive the 
     const { id, title, adminHeaders } = await offer(request, admin);
     await page.goto('/login'); await page.getByLabel('E-Mail oder Nutzername').fill('testverein');
     await page.getByLabel(/^Passwort/).fill('testverein'); await page.getByRole('button', { name: 'Anmelden', exact: true }).click();
-    await page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: title, exact: true }) }).getByRole('button', { name: 'Bearbeiten', exact: true }).click();
+    await page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: title, exact: true }) }).getByRole('link', { name: 'Bearbeiten', exact: true }).click();
     await page.getByRole('button', { name: /3\. Plätze/ }).click();
     const information = 'Treffpunkt: Vereinshaus um 9 Uhr.\nBitte Regenjacke mitbringen.';
     await page.getByLabel('Wichtige Informationen für Bestätigungsmails (optional)').fill(information);
