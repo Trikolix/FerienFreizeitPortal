@@ -214,4 +214,110 @@ final class PortalTest extends TestCase {
         $after = portalRow($this->db, 'SELECT * FROM bookings'); self::assertNull($after['contact_email']); self::assertSame(1, (int)$after['participant_count']);
         self::assertSame([], portalRows($this->db, 'SELECT * FROM booking_participants')); self::assertSame([], portalRows($this->db, 'SELECT * FROM portal_tokens WHERE booking_id = ?', [$booking['id']]));
     }
+
+    public function testSimpleEditsOnApprovedCampPublishImmediatelyWithoutReview(): void {
+        $id = $this->published();
+        $bookingResult = portalCreateBooking($this->db, $id, $this->input($this->formToken($id)));
+        $outboxBefore = (int)portalRow($this->db, "SELECT COUNT(*) AS n FROM mail_outbox WHERE kind = 'review'")['n'];
+
+        $current = portalInternalCamp($this->db, campWithRelations($this->db, portalRow($this->db, 'SELECT * FROM camps WHERE id = ?', [$id])));
+        $saved = portalSaveCamp($this->db, $this->club, $id, array_merge($current, [
+            'description' => '<p>Aktualisierte Beschreibung ohne Prüfung.</p>',
+            'categories' => ['Natur', 'Kreativ'],
+            'location_lat' => 50.7189,
+            'location_lng' => 12.4944,
+        ]));
+
+        self::assertFalse($saved['requires_review']);
+        self::assertSame('approved', $saved['review_status']);
+        $public = portalPublicCamp($this->db, campWithRelations($this->db, portalRow($this->db, 'SELECT * FROM camps WHERE id = ?', [$id])));
+        self::assertStringContainsString('Aktualisierte Beschreibung ohne Prüfung.', $public['description']);
+        self::assertSame(['Natur', 'Kreativ'], $public['categories']);
+        self::assertSame($outboxBefore, (int)portalRow($this->db, "SELECT COUNT(*) AS n FROM mail_outbox WHERE kind = 'review'")['n']);
+
+        $snapshot = portalDecode(portalRow($this->db, 'SELECT snapshot_json FROM bookings WHERE reference = ?', [$bookingResult['reference']])['snapshot_json']);
+        self::assertStringNotContainsString('Aktualisierte Beschreibung', $snapshot['description']);
+    }
+
+    public function testLegalAndRequirementsChangeRequiresReviewAndAppearsInBookingAndMail(): void {
+        $id = $this->published(['legal_and_requirements' => 'Erste Packliste']);
+        $current = portalInternalCamp($this->db, campWithRelations($this->db, portalRow($this->db, 'SELECT * FROM camps WHERE id = ?', [$id])));
+
+        $saved = portalSaveCamp($this->db, $this->club, $id, array_merge($current, [
+            'legal_and_requirements' => "Bitte Einverständniserklärung unterschrieben mitbringen.\nFestes Schuhwerk erforderlich.",
+        ]));
+
+        self::assertTrue($saved['requires_review']);
+        self::assertSame('draft', $saved['review_status']);
+        $publicBefore = publicCampPayload(portalPublicCamp($this->db, campWithRelations($this->db, portalRow($this->db, 'SELECT * FROM camps WHERE id = ?', [$id]))));
+        self::assertSame('Erste Packliste', $publicBefore['legal_and_requirements']);
+
+        $submitted = portalSubmitCamp($this->db, $this->club, $id);
+        portalReviewCamp($this->db, $this->admin, $id, ['decision' => 'approved', 'revision_id' => $submitted['revision_id']]);
+
+        $publicAfter = publicCampPayload(portalPublicCamp($this->db, campWithRelations($this->db, portalRow($this->db, 'SELECT * FROM camps WHERE id = ?', [$id]))));
+        self::assertStringContainsString('Einverständniserklärung', $publicAfter['legal_and_requirements']);
+
+        $booking = portalCreateBooking($this->db, $id, $this->input($this->formToken($id)));
+        $snapshot = portalDecode(portalRow($this->db, 'SELECT snapshot_json FROM bookings WHERE reference = ?', [$booking['reference']])['snapshot_json']);
+        self::assertStringContainsString('Festes Schuhwerk', $snapshot['legal_and_requirements']);
+
+        $job = portalRow($this->db, "SELECT * FROM mail_outbox WHERE kind = 'booking_status' ORDER BY id DESC LIMIT 1");
+        $mail = portalMail($this->db, $job);
+        self::assertStringContainsString('Rechtliches &amp; Teilnahmebedingungen', $mail['html']);
+        self::assertStringContainsString('Einverständniserklärung', $mail['html']);
+    }
+
+    public function testAdminEditDirectlyApprovesAndPublishesEvenReviewRequiredFields(): void {
+        $id = $this->published(['legal_and_requirements' => 'Alte Hinweise']);
+        $bookingResult = portalCreateBooking($this->db, $id, $this->input($this->formToken($id)));
+        $bookingMailsBefore = (int)portalRow($this->db, "SELECT COUNT(*) AS n FROM mail_outbox WHERE kind = 'booking_status'")['n'];
+        $reviewMailsBefore = (int)portalRow($this->db, "SELECT COUNT(*) AS n FROM mail_outbox WHERE kind = 'review'")['n'];
+
+        $current = portalInternalCamp($this->db, campWithRelations($this->db, portalRow($this->db, 'SELECT * FROM camps WHERE id = ?', [$id])));
+        $saved = portalSaveCamp($this->db, $this->admin, $id, array_merge($current, [
+            'title' => 'Vom Jugendring aktualisiert',
+            'price_eur' => 45,
+            'legal_and_requirements' => 'Neue Jugendring-Hinweise',
+            'status' => 'published',
+        ]));
+
+        self::assertFalse($saved['requires_review']);
+        self::assertSame('approved', $saved['review_status']);
+        $public = publicCampPayload(portalPublicCamp($this->db, campWithRelations($this->db, portalRow($this->db, 'SELECT * FROM camps WHERE id = ?', [$id]))));
+        self::assertSame('Vom Jugendring aktualisiert', $public['title']);
+        self::assertSame(45.0, $public['price_eur']);
+        self::assertSame('Neue Jugendring-Hinweise', $public['legal_and_requirements']);
+
+        $state = portalRow($this->db, 'SELECT approved_revision_id FROM camp_portal_state WHERE camp_id = ?', [$id]);
+        $revision = portalRow($this->db, 'SELECT * FROM camp_revisions WHERE id = ?', [$state['approved_revision_id']]);
+        self::assertSame((int)$this->admin['id'], (int)$revision['reviewed_by']);
+        self::assertSame('approved', $revision['review_status']);
+
+        $snapshot = portalDecode(portalRow($this->db, 'SELECT snapshot_json FROM bookings WHERE reference = ?', [$bookingResult['reference']])['snapshot_json']);
+        self::assertSame('Waldwoche', $snapshot['title']);
+        self::assertSame($bookingMailsBefore + 1, (int)portalRow($this->db, "SELECT COUNT(*) AS n FROM mail_outbox WHERE kind = 'booking_status'")['n']);
+        self::assertSame($reviewMailsBefore + 1, (int)portalRow($this->db, "SELECT COUNT(*) AS n FROM mail_outbox WHERE kind = 'review'")['n']);
+    }
+
+    public function testAdminCanDirectlyPublishDraftAndSwitchBackToDraft(): void {
+        $draft = portalSaveCamp($this->db, $this->club, null, $this->camp(['title' => 'Direktfreigabe aus Entwurf']));
+        $id = $draft['id'];
+        $current = portalInternalCamp($this->db, campWithRelations($this->db, portalRow($this->db, 'SELECT * FROM camps WHERE id = ?', [$id])));
+
+        $published = portalSaveCamp($this->db, $this->admin, $id, array_merge($current, ['status' => 'published']));
+        self::assertFalse($published['requires_review']);
+        self::assertSame('approved', $published['review_status']);
+        $campRow = portalRow($this->db, 'SELECT status FROM camps WHERE id = ?', [$id]);
+        self::assertSame('published', $campRow['status']);
+        $state = portalRow($this->db, 'SELECT approved_revision_id FROM camp_portal_state WHERE camp_id = ?', [$id]);
+        self::assertNotEmpty($state['approved_revision_id']);
+        $bookable = portalBookableCamp($this->db, $id);
+        self::assertSame('Direktfreigabe aus Entwurf', $bookable['title']);
+
+        $backToDraft = portalSaveCamp($this->db, $this->admin, $id, array_merge($current, ['status' => 'draft']));
+        self::assertTrue($backToDraft['requires_review']);
+        self::assertSame('draft', $backToDraft['review_status']);
+        self::assertSame('draft', portalRow($this->db, 'SELECT status FROM camps WHERE id = ?', [$id])['status']);
+    }
 }

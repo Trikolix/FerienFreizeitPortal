@@ -135,7 +135,7 @@ function handlePortalRoutes(PDO $db, string $path, string $method): void {
         $id = isset($match[1]) ? (int)$match[1] : null;
         if (($method === 'POST' && $id) || ($method === 'PUT' && !$id)) throw new PortalError('Ungültiger Aufruf.', 405);
         $result = portalSaveCamp($db, $user, $id, $_POST ?: readJsonBody());
-        jsonResponse($result, $method === 'POST' ? 201 : 200);
+        portalRespond($db, $result, $method === 'POST' ? 201 : 200);
     }
     if (preg_match('~^/api/camps/(\d+)/submit$~D', $path, $match) && $method === 'POST') {
         $user = portalRequireUser($db, false, true);

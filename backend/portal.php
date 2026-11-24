@@ -55,7 +55,7 @@ function portalProviderHistory(PDO $db, array $provider, string $action, ?int $a
 function portalEnsureProvider(PDO $db, array $user, bool $imported = false): array {
     $existing = portalProvider($db, (int)$user['id']);
     if ($existing) return $existing;
-    $profile = ['public_name' => $user['club_name'] ?: $user['display_name'], 'legal_name' => $user['club_name'] ?: $user['display_name'], 'contact_info' => $user['contact_info'] ?? '', 'website' => '', 'links' => [], 'tax_ids' => [], 'establishments' => [], 'residence_countries' => []];
+    $profile = ['public_name' => $user['club_name'] ?: $user['display_name'], 'legal_name' => $user['club_name'] ?: $user['display_name'], 'country' => 'DE', 'contact_info' => $user['contact_info'] ?? '', 'website' => '', 'links' => [], 'tax_ids' => [], 'establishments' => [], 'residence_countries' => ['DE']];
     portalExec($db, "INSERT INTO providers (user_id, status, email_verified, profile_data, created_at, updated_at) VALUES (?, 'draft', ?, ?, ?, ?)", [$user['id'], (int)$user['is_active'], portalJson($profile), $imported ? portalLegacyTimestamp($user['created_at'] ?? null) : portalNow(), portalNow()]);
     $provider = portalProvider($db, (int)$user['id']);
     portalProviderHistory($db, $provider, $imported ? 'imported' : 'created', null);
@@ -199,6 +199,7 @@ function portalPublicCamp(PDO $db, array $camp): array {
     if (!$revision) return $camp;
     $snapshot = portalDecode($revision['data_json']);
     $camp['confirmation_information'] = $snapshot['confirmation_information'] ?? '';
+    $camp['legal_and_requirements'] = $snapshot['legal_and_requirements'] ?? '';
     $provider = portalProvider($db, (int)$camp['club_id']);
     $profile = $provider ? portalDecode($provider['profile_data']) : [];
     $camp['image_metadata'] = $snapshot['image_metadata'] ?? [];
@@ -226,6 +227,67 @@ function portalInternalCamp(PDO $db, array $camp): array {
     $camp['occupied_in_portal'] = portalOccupied($db, (int)$camp['id']);
     return campWithLifecycle($camp);
 }
+function portalReviewRequiredFields(): array {
+    return ['title', 'starts_at', 'ends_at', 'price_eur', 'min_age', 'max_age', 'location_text', 'registration_deadline', 'legal_and_requirements', 'confirmation_information'];
+}
+
+function portalRequiresReview(array $approvedData, array $clean): bool {
+    foreach (portalReviewRequiredFields() as $field) {
+        $old = $approvedData[$field] ?? null;
+        $new = $clean[$field] ?? null;
+        if (in_array($field, ['starts_at', 'ends_at', 'registration_deadline'], true)) {
+            if (normalizedDate(is_string($old) ? $old : null) !== normalizedDate(is_string($new) ? $new : null)) return true;
+        } elseif (in_array($field, ['min_age', 'max_age'], true)) {
+            if (($old === null ? null : (int)$old) !== ($new === null ? null : (int)$new)) return true;
+        } elseif ($field === 'price_eur') {
+            if (($old === null ? null : round((float)$old, 2)) !== ($new === null ? null : round((float)$new, 2))) return true;
+        } else {
+            if (trim((string)($old ?? '')) !== trim((string)($new ?? ''))) return true;
+        }
+    }
+    return false;
+}
+
+function portalCreateApprovedRevision(PDO $db, int $campId, array $data, ?int $actor, string $reason, ?int $reviewedBy = null): int {
+    $data['image_metadata'] = campImageMetadata($db, $campId);
+    $data['images'] = array_column($data['image_metadata'], 'image_url');
+    $now = portalNow();
+    portalExec($db, "INSERT INTO camp_revisions (camp_id, data_json, created_by, reviewed_by, review_status, review_reason, created_at, reviewed_at) VALUES (?, ?, ?, ?, 'approved', ?, ?, ?)", [$campId, portalJson($data), $actor, $reviewedBy, $reason, $now, $now]);
+    $id = (int)$db->lastInsertId();
+    foreach ($data['images'] as $url) portalExec($db, 'INSERT INTO camp_revision_images (revision_id, image_url) VALUES (?, ?)', [$id, $url]);
+    return $id;
+}
+
+function portalMarkApprovedRevision(PDO $db, int $campId, array $data, int $revisionId): void {
+    portalExec($db, 'UPDATE camp_portal_state SET approved_revision_id = ? WHERE camp_id = ?', [$revisionId, $campId]);
+    $draftExisting = portalRow($db, 'SELECT camp_id FROM camp_drafts WHERE camp_id = ?', [$campId]);
+    if ($draftExisting) {
+        portalExec($db, "UPDATE camp_drafts SET data_json = ?, review_status = 'approved', revision_id = ?, review_reason = NULL, updated_at = ? WHERE camp_id = ?", [portalJson($data), $revisionId, portalNow(), $campId]);
+    } else {
+        portalExec($db, "INSERT INTO camp_drafts (camp_id, data_json, review_status, revision_id, updated_at) VALUES (?, ?, 'approved', ?, ?)", [$campId, portalJson($data), $revisionId, portalNow()]);
+    }
+}
+
+function portalSyncApprovedImages(PDO $db, int $campId, ?int $actor, ?int $reviewedBy = null): bool {
+    $camp = portalRow($db, 'SELECT * FROM camps WHERE id = ?', [$campId]);
+    $state = portalRow($db, 'SELECT approved_revision_id FROM camp_portal_state WHERE camp_id = ?', [$campId]);
+    $draft = portalRow($db, 'SELECT * FROM camp_drafts WHERE camp_id = ?', [$campId]);
+    $metadata = campImageMetadata($db, $campId);
+    if ($camp && campIsPublic($camp) && !empty($state['approved_revision_id']) && ($draft['review_status'] ?? '') === 'approved' && imageDescriptionsComplete($metadata)) {
+        $revision = portalRow($db, 'SELECT * FROM camp_revisions WHERE id = ?', [$state['approved_revision_id']]);
+        if ($revision) {
+            $data = portalDecode($revision['data_json']);
+            $data['image_metadata'] = $metadata;
+            $data['images'] = array_column($metadata, 'image_url');
+            $revId = portalCreateApprovedRevision($db, $campId, $data, $actor, 'Bilder direkt übernommen', $reviewedBy);
+            portalMarkApprovedRevision($db, $campId, $data, $revId);
+            return true;
+        }
+    }
+    portalInvalidateDraft($db, $campId);
+    return false;
+}
+
 function portalInvalidateDraft(PDO $db, int $campId): void {
     portalExec($db, "UPDATE camp_drafts SET review_status = 'draft', revision_id = NULL, review_reason = NULL, updated_at = ? WHERE camp_id = ?", [portalNow(), $campId]);
 }
@@ -236,7 +298,8 @@ function portalSetDraft(PDO $db, int $campId, array $data): void {
 }
 
 function portalSaveCamp(PDO $db, array $user, ?int $campId, array $input): array {
-    if (!$campId && isAdminRole($user)) throw new PortalError('Nur Träger können eigene Angebote anlegen.', 403);
+    $isAdmin = isAdminRole($user);
+    if (!$campId && $isAdmin) throw new PortalError('Nur Träger können eigene Angebote anlegen.', 403);
     beginWrite($db);
     try {
         $existing = $campId ? getCampForUser($db, $campId, $user) : null;
@@ -244,17 +307,22 @@ function portalSaveCamp(PDO $db, array $user, ?int $campId, array $input): array
         $owner = $existing ? portalRow($db, 'SELECT * FROM users WHERE id = ?', [$existing['club_id']]) : $user;
         $provider = portalProvider($db, (int)$owner['id']);
         if (!$provider || $provider['status'] !== 'approved') throw new PortalError('Das Trägerprofil muss zuerst freigegeben werden.', 403);
+        if ($isAdmin && $existing && !(int)$owner['is_active']) throw new PortalError('Zuerst den Träger aktivieren und freigeben.', 403);
         if (($input['allocation_method'] ?? 'request') !== 'request') throw new PortalError('Neue Portalbuchungen verwenden direkte Reservierungen.');
         $requestedStatus = $input['status'] ?? 'draft';
         [$clean, $errors] = validateCampPayload(array_merge($input, ['status' => 'draft', 'allocation_method' => 'request']), $owner, $existing);
         if ($errors) throw new PortalError('Bitte prüfe die markierten Angaben.', 422, $errors);
-        $clean['status'] = $requestedStatus === 'archived' ? 'archived' : ($existing && campIsPublic($existing) ? $existing['status'] : 'draft');
+        $clean['status'] = $requestedStatus === 'archived'
+            ? 'archived'
+            : ($isAdmin && $requestedStatus === 'draft'
+                ? 'draft'
+                : ($existing && campIsPublic($existing) ? $existing['status'] : 'draft'));
         $createdPaths = [];
         $images = validateUploadedImages($db, $campId);
         if (!$campId) {
-            // Mail information belongs to the reviewed JSON revision, not live inventory.
-            $columns = ['club_id', ...array_keys(array_diff_key($clean, ['categories' => true, 'confirmation_information' => true]))];
-            $values = [$user['id'], ...array_values(array_diff_key($clean, ['categories' => true, 'confirmation_information' => true]))];
+            // Mail information and legal terms belong to the reviewed JSON revision, not live inventory.
+            $columns = ['club_id', ...array_keys(array_diff_key($clean, ['categories' => true, 'confirmation_information' => true, 'legal_and_requirements' => true]))];
+            $values = [$user['id'], ...array_values(array_diff_key($clean, ['categories' => true, 'confirmation_information' => true, 'legal_and_requirements' => true]))];
             portalExec($db, 'INSERT INTO camps (' . implode(', ', $columns) . ') VALUES (' . implode(', ', array_fill(0, count($values), '?')) . ')', $values);
             $campId = (int)$db->lastInsertId();
             portalEnsureCampState($db, portalRow($db, 'SELECT * FROM camps WHERE id = ?', [$campId]));
@@ -268,13 +336,60 @@ function portalSaveCamp(PDO $db, array $user, ?int $campId, array $input): array
         portalExec($db, 'UPDATE camp_portal_state SET external_occupied = ? WHERE camp_id = ?', [$external, $campId]);
         portalExec($db, 'UPDATE camps SET capacity_total = ?, place_request_email = ? WHERE id = ?', [$total, $clean['place_request_email'], $campId]);
         if ($requestedStatus === 'archived') portalExec($db, "UPDATE camps SET status = 'archived' WHERE id = ?", [$campId]);
+        elseif ($isAdmin && $existing && $requestedStatus === 'draft') portalExec($db, "UPDATE camps SET status = 'draft' WHERE id = ?", [$campId]);
         persistUploadedImages($db, $campId, $images, $createdPaths);
-        portalSetDraft($db, $campId, $clean);
+
+        $directPublish = false;
+        $adminApproved = false;
+        if ($isAdmin && $existing && in_array($requestedStatus, ['published', 'fully_booked'], true)) {
+            $metadata = campImageMetadata($db, $campId);
+            if (!imageDescriptionsComplete($metadata)) throw new PortalError('Bitte zuerst alle Bilder beschreiben oder als dekorativ kennzeichnen.', 422, ['images' => 'Bildbeschreibungen fehlen.']);
+            $prevRev = !empty($state['approved_revision_id']) ? portalRow($db, 'SELECT * FROM camp_revisions WHERE id = ?', [$state['approved_revision_id']]) : null;
+            $previousApprovedData = $prevRev ? portalDecode($prevRev['data_json']) : null;
+            $remaining = $total === null ? null : max(0, $total - $external - $occupied);
+            $validationBase = $existing;
+            if (!empty($existing['starts_at']) && $existing['starts_at'] <= portalNow() && (empty($existing['ends_at']) || $existing['ends_at'] > portalNow())) $validationBase['status'] = 'published';
+            [$validated, $pubErrors] = validateCampPayload(array_merge($clean, ['status' => 'published', 'capacity_total' => $total, 'places_remaining' => $remaining]), $owner, $validationBase);
+            if ($pubErrors) throw new PortalError('Das Angebot erfüllt die Freigabevoraussetzungen nicht.', 422, $pubErrors);
+            $values = array_diff_key($validated, ['categories' => true, 'confirmation_information' => true, 'legal_and_requirements' => true, 'capacity_total' => true, 'places_remaining' => true, 'place_request_email' => true]);
+            portalExec($db, 'UPDATE camps SET ' . implode(', ', array_map(fn($key) => "$key = ?", array_keys($values))) . ' WHERE id = ?', [...array_values($values), $campId]);
+            saveCampCategories($db, $campId, $validated['categories']);
+            $revId = portalCreateApprovedRevision($db, $campId, $validated, (int)$user['id'], 'Direkt durch Jugendring-Mitarbeitende freigegeben', (int)$user['id']);
+            portalMarkApprovedRevision($db, $campId, $validated, $revId);
+            if ($previousApprovedData && portalRequiresReview($previousApprovedData, $validated)) {
+                foreach (portalRows($db, "SELECT * FROM bookings WHERE camp_id = ? AND status IN ('reserved', 'waitlist', 'confirmed') AND anonymized_at IS NULL", [$campId]) as $booking) {
+                    portalQueueBookingMail($db, $booking, 'Das veröffentlichte Angebot wurde aktualisiert. Deine Anmeldung bezieht sich weiterhin auf die bei Anmeldung gespeicherte Fassung. Bitte kontaktiere den Anbieter bei Fragen.');
+                }
+            }
+            portalQueue($db, 'review', $owner['email'], ['message' => 'Dein Angebot wurde vom Jugendring bearbeitet und direkt freigegeben: ' . $validated['title']], (int)$provider['id']);
+            $directPublish = true;
+            $adminApproved = true;
+        } elseif (!$isAdmin && $existing && campIsPublic($existing) && $requestedStatus !== 'archived' && !empty($state['approved_revision_id'])) {
+            $approvedRevision = portalRow($db, 'SELECT * FROM camp_revisions WHERE id = ?', [$state['approved_revision_id']]);
+            $approvedData = $approvedRevision ? portalDecode($approvedRevision['data_json']) : null;
+            if ($approvedData && !portalRequiresReview($approvedData, $clean) && imageDescriptionsComplete(campImageMetadata($db, $campId))) {
+                $remaining = $total === null ? null : max(0, $total - $external - $occupied);
+                [$validated, $pubErrors] = validateCampPayload(array_merge($clean, ['status' => 'published', 'capacity_total' => $total, 'places_remaining' => $remaining]), $owner, $existing);
+                if (!$pubErrors) {
+                    $directFields = array_intersect_key($validated, array_flip(['description', 'type', 'location_lat', 'location_lng', 'place_requests_enabled', 'request_opens_at', 'waitlist_enabled']));
+                    portalExec($db, 'UPDATE camps SET ' . implode(', ', array_map(fn($key) => "$key = ?", array_keys($directFields))) . ' WHERE id = ?', [...array_values($directFields), $campId]);
+                    saveCampCategories($db, $campId, $validated['categories']);
+                    $revId = portalCreateApprovedRevision($db, $campId, $validated, (int)$user['id'], 'Direkt übernommen (keine prüfungspflichtigen Änderungen)');
+                    portalMarkApprovedRevision($db, $campId, $validated, $revId);
+                    $directPublish = true;
+                }
+            }
+        }
+        if (!$directPublish) portalSetDraft($db, $campId, $clean);
+
         portalRefreshCapacity($db, $campId);
         $updated = portalRow($db, 'SELECT places_remaining FROM camps WHERE id = ?', [$campId]);
         if ($existing && (int)$updated['places_remaining'] > (int)$existing['places_remaining']) portalNotifyWaitlist($db, $campId);
         $db->commit();
-        return ['id' => $campId, 'message' => 'Arbeitsfassung gespeichert. Veröffentlichung erfolgt nach Prüfung.'];
+        if ($adminApproved) return ['id' => $campId, 'requires_review' => false, 'review_status' => 'approved', 'message' => 'Änderungen wurden direkt freigegeben und veröffentlicht.'];
+        return $directPublish
+            ? ['id' => $campId, 'requires_review' => false, 'review_status' => 'approved', 'message' => 'Änderungen wurden direkt übernommen und veröffentlicht.']
+            : ['id' => $campId, 'requires_review' => true, 'review_status' => 'draft', 'message' => 'Arbeitsfassung gespeichert. Veröffentlichung erfolgt nach Prüfung.'];
     } catch (Throwable $error) {
         if ($db->inTransaction()) $db->rollBack();
         foreach ($createdPaths ?? [] as $path) if (is_file($path)) unlink($path);
@@ -322,7 +437,7 @@ function portalReviewCamp(PDO $db, array $admin, int $campId, array $input): voi
             if ($revision['created_by'] === null && $camp['ends_at'] > portalNow()) $validationBase['status'] = 'published';
             [$validated, $errors] = validateCampPayload(array_merge($data, ['status' => 'published', 'capacity_total' => $camp['capacity_total'], 'places_remaining' => $camp['places_remaining']]), $owner, $validationBase);
             if ($errors) throw new PortalError('Das Angebot erfüllt die Freigabevoraussetzungen nicht mehr.', 422, $errors);
-            $values = array_diff_key($validated, ['categories' => true, 'confirmation_information' => true, 'capacity_total' => true, 'places_remaining' => true, 'place_request_email' => true]);
+            $values = array_diff_key($validated, ['categories' => true, 'confirmation_information' => true, 'legal_and_requirements' => true, 'capacity_total' => true, 'places_remaining' => true, 'place_request_email' => true]);
             portalExec($db, 'UPDATE camps SET ' . implode(', ', array_map(fn($key) => "$key = ?", array_keys($values))) . ' WHERE id = ?', [...array_values($values), $campId]);
             saveCampCategories($db, $campId, $validated['categories']);
             $previous = portalRow($db, 'SELECT approved_revision_id FROM camp_portal_state WHERE camp_id = ?', [$campId]);
@@ -396,6 +511,7 @@ function portalCreateBooking(PDO $db, int $campId, array $input): array {
         $provider = portalProvider($db, (int)$camp['club_id']);
         $snapshot = publicCampPayload($camp);
         $snapshot['confirmation_information'] = $camp['confirmation_information'] ?? '';
+        $snapshot['legal_and_requirements'] = $camp['legal_and_requirements'] ?? '';
         $snapshot['approved_revision_id'] = $camp['approved_revision_id'];
         $snapshot['participant_count'] = $quantity;
         $snapshot['total_price_cents'] = (int)round((float)$camp['price_eur'] * 100) * $quantity;
@@ -466,6 +582,7 @@ function portalBookingMailSummary(PDO $db, array $booking, array $snapshot): str
     }
     $html .= '</ul>';
     if ($booking['message']) $html .= '<h3>Nachricht an den Anbieter</h3><p>' . nl2br($escape($booking['message'])) . '</p>';
+    if (!empty($snapshot['legal_and_requirements'])) $html .= '<h3>Rechtliches &amp; Teilnahmebedingungen</h3><p>' . nl2br($escape($snapshot['legal_and_requirements'])) . '</p>';
     if (!empty($snapshot['confirmation_information'])) $html .= '<h3>Wichtige Informationen des Anbieters</h3><p>' . nl2br($escape($snapshot['confirmation_information'])) . '</p>';
     $contact = $snapshot['provider'] ?? [];
     if (!empty($contact['contact_info'])) $html .= '<h3>Kontakt zum Anbieter</h3><p>' . nl2br($escape($contact['contact_info'])) . '</p>';

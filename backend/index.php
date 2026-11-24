@@ -1105,7 +1105,9 @@ try {
             $copyImages->execute([$newCampId, $sourceCamp['id']]);
 
             $copyData = campWithRelations($db, portalRow($db, 'SELECT * FROM camps WHERE id = ?', [$newCampId]));
-            $copyData['confirmation_information'] = portalInternalCamp($db, campWithRelations($db, $sourceCamp))['confirmation_information'] ?? '';
+            $internalSource = portalInternalCamp($db, campWithRelations($db, $sourceCamp));
+            $copyData['confirmation_information'] = $internalSource['confirmation_information'] ?? '';
+            $copyData['legal_and_requirements'] = $internalSource['legal_and_requirements'] ?? '';
             portalSetDraft($db, (int)$newCampId, $copyData);
 
             $db->commit();
@@ -1180,7 +1182,7 @@ try {
         catch (InvalidArgumentException $e) { jsonResponse(['error' => $e->getMessage()], 422); }
         $db->prepare('UPDATE camp_images SET alt_text = ?, is_decorative = ? WHERE id = ? AND camp_id = ?')
             ->execute([$metadata['alt_text'], $metadata['is_decorative'], $matches[2], $matches[1]]);
-        portalInvalidateDraft($db, (int)$matches[1]);
+        portalSyncApprovedImages($db, (int)$matches[1], (int)$user['id'], isAdminRole($user) ? (int)$user['id'] : null);
         $db->commit();
         jsonResponse(['message' => 'Bildbeschreibung gespeichert.']);
     }
@@ -1199,7 +1201,7 @@ try {
         $validatedImages = validateUploadedImages($db, $campId);
         $createdPaths = [];
         $savedImages = persistUploadedImages($db, $campId, $validatedImages, $createdPaths);
-        portalInvalidateDraft($db, (int)$campId);
+        portalSyncApprovedImages($db, (int)$campId, (int)$user['id'], isAdminRole($user) ? (int)$user['id'] : null);
         $db->commit();
         jsonResponse(['message' => 'Bilder gespeichert.', 'images' => $savedImages, 'image_metadata' => campImageMetadata($db, $campId)]);
     }
@@ -1232,7 +1234,7 @@ try {
 
         $deleteStmt = $db->prepare('DELETE FROM camp_images WHERE camp_id = ? AND image_url = ?');
         $deleteStmt->execute([$campId, $imageUrl]);
-        portalInvalidateDraft($db, (int)$campId);
+        portalSyncApprovedImages($db, (int)$campId, (int)$user['id'], isAdminRole($user) ? (int)$user['id'] : null);
         $db->commit();
         removeUnreferencedImages($db, [$imageUrl]);
 
